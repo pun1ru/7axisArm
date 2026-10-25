@@ -1,0 +1,4 @@
+[submodule "Real/DIYcontroller"]
+	path = Real/DIYcontroller
+	url = https://github.com/pun1ru/dm_mcV610.git
+	branch = 7axisarm
