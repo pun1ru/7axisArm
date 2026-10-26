@@ -1,0 +1,11 @@
+重力补偿:https://github.com/yagami-light7/gravity_identification.git
+6D笛卡尔空间控制:https://github.com/yagami-light7/MecArm_Kinematics.git
+URDF简易版导出:https://gitee.com/ZHUZIYUrgs_admin/ovo-urdf
+笛卡尔空间阻抗控制：https://github.com/HighTorque-Robotics/Panthera-HT-ROS2.git
+7DOF解析解结算：https://pan.baidu.com/s/1KbqCqtNhBDBi1xK9_SKbdg?pwd=3k4m
+RM:
+北理：
+https://bbs.robomaster.com/article/1941628?source=4
+重力补偿推导：https://bbs.robomaster.com/article/1970715?source=4
+QDU:
+https://bbs.robomaster.com/article/1892262?source=4
