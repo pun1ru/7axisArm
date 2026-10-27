@@ -1,0 +1,251 @@
+<mujoco model="_装配体_自定义控制器_DM4310_">
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <default>
+    <default class="visual">
+      <geom type="mesh" group="2" contype="0" conaffinity="0" rgba="0.75 0.75 0.78 1"/>
+    </default>
+    <default class="visual_hidden">
+      <geom type="mesh" group="4" contype="0" conaffinity="0" rgba="0.75 0.75 0.78 1"/>
+    </default>
+    <default class="collision">
+      <geom type="mesh" group="3" contype="1" conaffinity="1" rgba="0.9 0.3 0.3 0.4"/>
+    </default>
+  </default>
+
+  <asset>
+    <mesh name="base_vis" file="visual/base.stl"/>
+    <mesh name="base_0" file="collision/base_0.stl"/>
+    <mesh name="base_1" file="collision/base_1.stl"/>
+    <mesh name="base_2" file="collision/base_2.stl"/>
+    <mesh name="base_3" file="collision/base_3.stl"/>
+    <mesh name="base_4" file="collision/base_4.stl"/>
+    <mesh name="base_5" file="collision/base_5.stl"/>
+    <mesh name="base_6" file="collision/base_6.stl"/>
+    <mesh name="base_7" file="collision/base_7.stl"/>
+    <mesh name="base_8" file="collision/base_8.stl"/>
+    <mesh name="base_9" file="collision/base_9.stl"/>
+    <mesh name="base_10" file="collision/base_10.stl"/>
+    <mesh name="base_11" file="collision/base_11.stl"/>
+    <mesh name="link1_vis" file="visual/link1.stl"/>
+    <mesh name="link1_0" file="collision/link1_0.stl"/>
+    <mesh name="link1_1" file="collision/link1_1.stl"/>
+    <mesh name="link1_2" file="collision/link1_2.stl"/>
+    <mesh name="link1_3" file="collision/link1_3.stl"/>
+    <mesh name="link1_4" file="collision/link1_4.stl"/>
+    <mesh name="link1_5" file="collision/link1_5.stl"/>
+    <mesh name="link1_6" file="collision/link1_6.stl"/>
+    <mesh name="link1_7" file="collision/link1_7.stl"/>
+    <mesh name="link1_8" file="collision/link1_8.stl"/>
+    <mesh name="link1_9" file="collision/link1_9.stl"/>
+    <mesh name="link1_10" file="collision/link1_10.stl"/>
+    <mesh name="link1_11" file="collision/link1_11.stl"/>
+    <mesh name="link2_vis" file="visual/link2.stl"/>
+    <mesh name="link2_0" file="collision/link2_0.stl"/>
+    <mesh name="link2_1" file="collision/link2_1.stl"/>
+    <mesh name="link2_2" file="collision/link2_2.stl"/>
+    <mesh name="link2_3" file="collision/link2_3.stl"/>
+    <mesh name="link2_4" file="collision/link2_4.stl"/>
+    <mesh name="link2_5" file="collision/link2_5.stl"/>
+    <mesh name="link2_6" file="collision/link2_6.stl"/>
+    <mesh name="link2_7" file="collision/link2_7.stl"/>
+    <mesh name="link2_8" file="collision/link2_8.stl"/>
+    <mesh name="link2_9" file="collision/link2_9.stl"/>
+    <mesh name="link2_10" file="collision/link2_10.stl"/>
+    <mesh name="link2_11" file="collision/link2_11.stl"/>
+    <mesh name="link3_vis" file="visual/link3.stl"/>
+    <mesh name="link3_0" file="collision/link3_0.stl"/>
+    <mesh name="link3_1" file="collision/link3_1.stl"/>
+    <mesh name="link3_2" file="collision/link3_2.stl"/>
+    <mesh name="link3_3" file="collision/link3_3.stl"/>
+    <mesh name="link3_4" file="collision/link3_4.stl"/>
+    <mesh name="link3_5" file="collision/link3_5.stl"/>
+    <mesh name="link3_6" file="collision/link3_6.stl"/>
+    <mesh name="link3_7" file="collision/link3_7.stl"/>
+    <mesh name="link3_8" file="collision/link3_8.stl"/>
+    <mesh name="link3_9" file="collision/link3_9.stl"/>
+    <mesh name="link3_10" file="collision/link3_10.stl"/>
+    <mesh name="link3_11" file="collision/link3_11.stl"/>
+    <mesh name="link4_vis" file="visual/link4.stl"/>
+    <mesh name="link4_0" file="collision/link4_0.stl"/>
+    <mesh name="link4_1" file="collision/link4_1.stl"/>
+    <mesh name="link4_2" file="collision/link4_2.stl"/>
+    <mesh name="link4_3" file="collision/link4_3.stl"/>
+    <mesh name="link5_vis" file="visual/link5.stl"/>
+    <mesh name="link5_0" file="collision/link5_0.stl"/>
+    <mesh name="link5_1" file="collision/link5_1.stl"/>
+    <mesh name="link5_2" file="collision/link5_2.stl"/>
+    <mesh name="link5_3" file="collision/link5_3.stl"/>
+    <mesh name="link5_4" file="collision/link5_4.stl"/>
+    <mesh name="link5_5" file="collision/link5_5.stl"/>
+    <mesh name="link5_6" file="collision/link5_6.stl"/>
+    <mesh name="link5_7" file="collision/link5_7.stl"/>
+    <mesh name="link5_8" file="collision/link5_8.stl"/>
+    <mesh name="link5_9" file="collision/link5_9.stl"/>
+    <mesh name="link5_10" file="collision/link5_10.stl"/>
+    <mesh name="link5_11" file="collision/link5_11.stl"/>
+    <mesh name="link6_vis" file="visual/link6.stl"/>
+    <mesh name="link6_0" file="collision/link6_0.stl"/>
+    <mesh name="link6_1" file="collision/link6_1.stl"/>
+    <mesh name="link6_2" file="collision/link6_2.stl"/>
+    <mesh name="link6_3" file="collision/link6_3.stl"/>
+    <mesh name="link6_4" file="collision/link6_4.stl"/>
+    <mesh name="link6_5" file="collision/link6_5.stl"/>
+    <mesh name="link6_6" file="collision/link6_6.stl"/>
+    <mesh name="link6_7" file="collision/link6_7.stl"/>
+    <mesh name="link6_8" file="collision/link6_8.stl"/>
+    <mesh name="link6_9" file="collision/link6_9.stl"/>
+    <mesh name="link6_10" file="collision/link6_10.stl"/>
+    <mesh name="link6_11" file="collision/link6_11.stl"/>
+    <mesh name="link7_vis" file="visual/link7.stl"/>
+    <mesh name="link7_0" file="collision/link7_0.stl"/>
+    <mesh name="link7_1" file="collision/link7_1.stl"/>
+    <mesh name="link7_2" file="collision/link7_2.stl"/>
+    <mesh name="link7_3" file="collision/link7_3.stl"/>
+    <mesh name="link7_4" file="collision/link7_4.stl"/>
+    <mesh name="link7_5" file="collision/link7_5.stl"/>
+    <mesh name="link7_6" file="collision/link7_6.stl"/>
+    <mesh name="link7_7" file="collision/link7_7.stl"/>
+    <mesh name="link7_8" file="collision/link7_8.stl"/>
+    <mesh name="link7_9" file="collision/link7_9.stl"/>
+    <mesh name="link7_10" file="collision/link7_10.stl"/>
+    <mesh name="link7_11" file="collision/link7_11.stl"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+    <body name="base">
+      <inertial pos="0.01493996353 -0.02701582026 -0.06408052326" mass="0.575927632" fullinertia="0.0004620990421 0.0004259311012 0.0003797397728 -7.54204106e-06 9.429066327e-06 1.647697448e-05"/>
+      <geom class="visual_hidden" mesh="base_vis" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_0" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_1" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_2" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_3" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_4" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_5" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_6" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_7" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_8" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_9" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_10" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <geom class="collision" mesh="base_11" pos="0 0 0" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+      <body name="link1" pos="0.01564631523 -0.02600617209 0.004207696887" quat="1 0 0 0">
+        <inertial pos="-0.0007063516978 -0.001009648166 -0.06828822015" mass="0.575927632" fullinertia="0.0004620990421 0.0004259311012 0.0003797397728 -7.54204106e-06 9.429066327e-06 1.647697448e-05"/>
+        <joint name="joint1" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+        <geom class="visual" mesh="link1_vis" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_0" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_1" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_2" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_3" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_4" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_5" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_6" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_7" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_8" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_9" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_10" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <geom class="collision" mesh="link1_11" pos="-0.01564631523 0.02600617209 -0.004207696887" quat="0.2645306126 -0.6453491204 -0.1922798791 -0.690345215"/>
+        <body name="link2" pos="7.170833143e-09 0.004000000024 -1.161850293e-12" quat="0.6123724357 0.6123724354 0.3535533908 -0.3535533909">
+          <inertial pos="4.53526889e-05 0.004921546531 0.01578472056" mass="0.452797436" fullinertia="0.0003487838238 0.0002741458748 0.0002733395864 1.478798916e-07 6.591176186e-07 -2.798615297e-05"/>
+          <joint name="joint2" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+          <geom class="visual" mesh="link2_vis" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_0" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_1" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_2" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_3" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_4" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_5" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_6" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_7" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_8" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_9" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_10" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <geom class="collision" mesh="link2_11" pos="-0.004179188804 -0.01565396112 -0.02200617207" quat="0.05711006852 0.2451301734 0.8621863434 0.4396411576"/>
+          <body name="link3" pos="-4.316460807e-09 0.147999652 -4.090038924e-08" quat="0.706960061 0.7069598655 -0.01440868897 0.01440869295">
+            <inertial pos="0.0004449866266 0.005700491172 0.06077438363" mass="0.580566942" fullinertia="0.0006579507701 0.0005890490565 0.0003957628065 -7.528926795e-06 2.691639257e-05 0.0001673633018"/>
+            <joint name="joint3" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+            <geom class="visual" mesh="link3_vis" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_0" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_1" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_2" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_3" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_4" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_5" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_6" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_7" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_8" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_9" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_10" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <geom class="collision" mesh="link3_11" pos="-0.005072365931 -0.02181761872 0.163653607" quat="-0.2075834117 -0.1516803469 -0.9176308393 0.3030772877"/>
+            <body name="link4" pos="-2.838116055e-09 0.002502097331 4.376801019e-08" quat="0.6110182758 0.6110289642 0.3558824963 -0.3558762711">
+              <inertial pos="-3.604176724e-05 -0.001614743298 0.002562135922" mass="0.336674971" fullinertia="0.0001415189945 0.0001312350326 0.000151661185 -2.804916627e-08 -2.837379468e-07 2.453150268e-06"/>
+              <joint name="joint4" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+              <geom class="visual" mesh="link4_vis" pos="-0.1448494049 0.07633483329 0.02431685333" quat="0.6539451123 -0.2528631526 0.3556043457 -0.6180303921"/>
+              <geom class="collision" mesh="link4_0" pos="-0.1448494049 0.07633483329 0.02431685333" quat="0.6539451123 -0.2528631526 0.3556043457 -0.6180303921"/>
+              <geom class="collision" mesh="link4_1" pos="-0.1448494049 0.07633483329 0.02431685333" quat="0.6539451123 -0.2528631526 0.3556043457 -0.6180303921"/>
+              <geom class="collision" mesh="link4_2" pos="-0.1448494049 0.07633483329 0.02431685333" quat="0.6539451123 -0.2528631526 0.3556043457 -0.6180303921"/>
+              <geom class="collision" mesh="link4_3" pos="-0.1448494049 0.07633483329 0.02431685333" quat="0.6539451123 -0.2528631526 0.3556043457 -0.6180303921"/>
+              <body name="link5" pos="4.805759683e-07 -0.09999888857 2.365613278e-06" quat="0.7065832043 0.7065664893 0.02742203562 -0.0274226843">
+                <inertial pos="7.573250641e-05 0.003369659169 -0.04109087606" mass="0.144687183" fullinertia="6.060260358e-05 5.28519551e-05 3.864340582e-05 -2.403367364e-07 1.705155807e-07 -1.456283642e-05"/>
+                <joint name="joint5" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+                <geom class="visual" mesh="link5_vis" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_0" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_1" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_2" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_3" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_4" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_5" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_6" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_7" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_8" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_9" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_10" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <geom class="collision" mesh="link5_11" pos="-0.1462989737 0.01301909355 -0.1763331466" quat="0.3101014503 -0.6335285332 -0.2102821991 -0.6769491007"/>
+                <body name="link6" pos="-8.497409919e-08 0.0009994027096 0" quat="0.5061230155 0.5061230159 -0.4938010659 0.4938010664">
+                  <inertial pos="-3.157067886e-05 -0.002467601045 0.006155574944" mass="0.144933556" fullinertia="4.13332844e-05 3.492615023e-05 3.774666547e-05 1.151908884e-07 -7.521561576e-08 2.866199771e-06"/>
+                  <joint name="joint6" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+                  <geom class="visual" mesh="link6_vis" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_0" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_1" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_2" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_3" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_4" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_5" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_6" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_7" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_8" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_9" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_10" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <geom class="collision" mesh="link6_11" pos="-0.1798847026 0.141909257 -0.01201969085" quat="0.394134504 0.9157086147 -0.01691731065 0.07648222155"/>
+                  <body name="link7" pos="1.312649219e-06 0 0" quat="0.7071138249 -0.7070997374 4.300476791e-12 4.300391114e-12">
+                    <inertial pos="-3.082177387e-06 8.406387322e-05 -0.04726752069" mass="0.0736087532" fullinertia="1.270810481e-05 1.283277276e-05 1.522508203e-05 -4.941058695e-08 -1.608846679e-07 2.117446307e-07"/>
+                    <joint name="joint7" type="hinge" axis="0 0 1" range="-3.14159 3.14159"/>
+                    <geom class="visual" mesh="link7_vis" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_0" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_1" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_2" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_3" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_4" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_5" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_6" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_7" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_8" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_9" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_10" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                    <geom class="collision" mesh="link7_11" pos="-0.1798860152 0.01202251802 0.1419090175" quat="0.3687993643 -0.9262026254 0.06604302302 -0.04211941026"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="base" body2="link1"/>
+    <exclude body1="base" body2="link2"/>
+  </contact>
+</mujoco>
