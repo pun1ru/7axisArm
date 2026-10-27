@@ -1,0 +1,133 @@
+<mxfile host="Electron">
+  <diagram name="第 1 页" id="Vul7OFHJndGDuimT_LFl">
+    <mxGraphModel dx="820" dy="719" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-4" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-5" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="模式" vertex="1">
+          <mxGeometry height="60" width="120" x="380" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-18" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="master" vertex="1">
+          <mxGeometry height="60" width="120" x="180" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-28" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-10">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="590" y="60" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-29" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.836;exitY=1.013;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;exitPerimeter=0;" target="BEyBnbOcmfqTx-GPwxAJ-11">
+          <mxGeometry relative="1" x="0.0515" as="geometry">
+            <Array as="points">
+              <mxPoint x="670.3" y="165" />
+            </Array>
+            <mxPoint x="550" y="60" as="sourcePoint" />
+            <mxPoint x="660.0000000000002" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="servant" vertex="1">
+          <mxGeometry height="60" width="120" x="570" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-16" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="270" y="120" as="sourcePoint" />
+            <mxPoint x="270" y="120" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-36" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-30">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-7" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="电限位" vertex="1">
+          <mxGeometry height="60" width="120" x="560" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-35" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-8" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="重力补偿" vertex="1">
+          <mxGeometry height="60" width="120" x="560" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-15" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-40" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-9" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="J0-J7关节角" vertex="1">
+          <mxGeometry height="60" width="120" x="340" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-31" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" target="BEyBnbOcmfqTx-GPwxAJ-8">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="550" y="325" as="sourcePoint" />
+            <mxPoint x="550" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-10" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="映射模式" vertex="1">
+          <mxGeometry height="60" width="120" x="490" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-11" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="自动模式" vertex="1">
+          <mxGeometry height="60" width="120" x="640" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-24" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-21">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="930" y="250" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-25" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-20" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="给定路径,姿态,位置" vertex="1">
+          <mxGeometry height="60" width="120" x="920" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-23" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="910.3333333333335" y="250.33333333333337" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-26" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-21" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="运动学逆解析" vertex="1">
+          <mxGeometry height="60" width="120" x="790" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-27" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-22" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="轨迹规划" vertex="1">
+          <mxGeometry height="60" width="120" x="790" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-30" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="关节角闭环" vertex="1">
+          <mxGeometry height="60" width="120" x="560" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-32" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;defaultLabelBackgroundColor=page;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" target="BEyBnbOcmfqTx-GPwxAJ-8">
+          <mxGeometry relative="1" x="0.025" as="geometry">
+            <Array as="points">
+              <mxPoint x="650" y="330" />
+            </Array>
+            <mxPoint x="700" y="385" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-37" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="电限位" vertex="1">
+          <mxGeometry height="60" width="120" x="340" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-38" edge="1" parent="1" source="BEyBnbOcmfqTx-GPwxAJ-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;" target="BEyBnbOcmfqTx-GPwxAJ-37">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="BEyBnbOcmfqTx-GPwxAJ-39" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="重力补偿" vertex="1">
+          <mxGeometry height="60" width="120" x="340" y="380" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
