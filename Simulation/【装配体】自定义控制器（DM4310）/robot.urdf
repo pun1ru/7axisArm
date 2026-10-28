@@ -464,84 +464,84 @@
   </link>
   <link name="link6">
     <inertial>
-      <origin xyz="-3.157067886e-05 -0.002467601045 0.006155574944" rpy="0 0 0" />
+      <origin xyz="3.157067886e-05 0.002467601045 0.006155574944" rpy="0 0 0" />
       <mass value="0.144933556" />
-      <inertia ixx="4.13332843958e-05" ixy="1.15190888442e-07" ixz="-7.52156157588e-08" iyy="3.49261502338e-05" iyz="2.86619977086e-06" izz="3.77466654704e-05" />
+      <inertia ixx="4.13332843958e-05" ixy="1.15190888442e-07" ixz="7.52156157588e-08" iyy="3.49261502338e-05" iyz="-2.86619977086e-06" izz="3.77466654704e-05" />
     </inertial>
     <visual>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/visual/link6.stl" />
       </geometry>
     </visual>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_0.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_1.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_2.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_3.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_4.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_5.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_6.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_7.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_8.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_9.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_10.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798847026 0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 0.02966130306" />
+      <origin xyz="0.1798847026 -0.141909257 -0.01201969085" rpy="2.326407739 -0.1540144098 -3.111931351" />
       <geometry>
         <mesh filename="meshes/collision/link6_11.stl" />
       </geometry>
@@ -549,84 +549,84 @@
   </link>
   <link name="link7">
     <inertial>
-      <origin xyz="-3.082177387e-06 8.406387322e-05 -0.04726752069" rpy="0 0 0" />
+      <origin xyz="3.082177387e-06 -8.406387322e-05 -0.04726752069" rpy="0 0 0" />
       <mass value="0.0736087532" />
-      <inertia ixx="1.27081048074e-05" ixy="-4.94105869453e-08" ixz="-1.60884667945e-07" iyy="1.28327727628e-05" iyz="2.11744630697e-07" izz="1.52250820298e-05" />
+      <inertia ixx="1.27081048074e-05" ixy="-4.94105869453e-08" ixz="1.60884667945e-07" iyy="1.28327727628e-05" iyz="-2.11744630697e-07" izz="1.52250820298e-05" />
     </inertial>
     <visual>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/visual/link7.stl" />
       </geometry>
     </visual>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_0.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_1.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_2.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_3.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_4.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_5.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_6.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_7.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_8.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_9.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_10.stl" />
       </geometry>
     </collision>
     <collision>
-      <origin xyz="-0.1798860152 0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 -0.1540805404" />
+      <origin xyz="0.1798860152 -0.01202251802 0.1419090175" rpy="-2.381449404 -0.02931316468 2.987512113" />
       <geometry>
         <mesh filename="meshes/collision/link7_11.stl" />
       </geometry>
@@ -640,42 +640,42 @@
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint2" type="revolute">
-    <origin xyz="7.170833143e-09 0.004000000024 -1.161850293e-12" rpy="1.570796326 1.047197552 -5.030947457e-10" />
+    <origin xyz="7.170833143e-09 0.004000000024 -1.161850293e-12" rpy="1.570796327 0 0" />
     <parent link="link1" />
     <child link="link2" />
     <axis xyz="0 0 1" />
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint3" type="revolute">
-    <origin xyz="-4.316460807e-09 0.147999652 -4.090038924e-08" rpy="1.57079605 -0.04075675318 1.126955818e-08" />
+    <origin xyz="-4.316460807e-09 0.147999652 -4.090038924e-08" rpy="1.570796327 0 0" />
     <parent link="link2" />
     <child link="link3" />
     <axis xyz="0 0 1" />
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint4" type="revolute">
-    <origin xyz="-2.838116055e-09 0.002502097331 4.376801019e-08" rpy="1.57083178 1.054802579 3.083716605e-05" />
+    <origin xyz="-2.838116055e-09 0.002502097331 4.376801019e-08" rpy="1.570796327 0 0" />
     <parent link="link3" />
     <child link="link4" />
     <axis xyz="0 0 1" />
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint5" type="revolute">
-    <origin xyz="4.805759683e-07 -0.09999888857 2.365613278e-06" rpy="1.570772599 0.07758160177 -1.838953601e-06" />
+    <origin xyz="4.805759683e-07 -0.09999888857 2.365613278e-06" rpy="1.570796327 0 0" />
     <parent link="link4" />
     <child link="link5" />
     <axis xyz="0 0 1" />
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint6" type="revolute">
-    <origin xyz="-8.497409919e-08 0.0009994027096 0" rpy="1.570796325 -1.546151804 2.670220361e-09" />
+    <origin xyz="-8.497409919e-08 0.0009994027096 0" rpy="1.570796327 0 0" />
     <parent link="link5" />
     <child link="link6" />
     <axis xyz="0 0 1" />
     <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint7" type="revolute">
-    <origin xyz="1.312649219e-06 0 0" rpy="-1.570776404 1.216346404e-11 0" />
+    <origin xyz="-1.312649219e-06 0 0" rpy="1.570796327 0 0" />
     <parent link="link6" />
     <child link="link7" />
     <axis xyz="0 0 1" />
