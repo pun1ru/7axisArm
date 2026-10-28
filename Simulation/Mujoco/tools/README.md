@@ -27,9 +27,10 @@ tools/check.sh my.xml other.urdf     # 指定文件
 ## 两处"允许不一致"
 
 1. **body 原点**（第 4 节）。坐标系沿自身关节轴滑动属于刻度选择，不改变物理。
-   报告里 `dCOM_body` 非零的就是这些 body；只要世界系各项误差在 1e-9 量级就没问题。
-   当前 `link2/4/5/6` 的原点相对 `O_i = J(i-1)∩J(i)` 仍有 4.0 / 2.5 / 100.0 / 1.0 mm 偏置，
-   见第 4 节表格。
+   报告里 `dCOM_body` 非零的就是相对 URDF 平移过的 body；只要世界系各项误差在 1e-9
+   量级就没问题。当前所有 `link_i` 原点都已放在 `O_i = J(i-1)∩J(i)` 上（`link1`/`base`
+   取基座为 `O_1`），第 4 节表里"到 O_i"一列应全为 0；"到 O_(i+1)"一列就是改进 DH
+   的 d_i（4.0 / 148.0 / 2.5 / 100.0 / 1.0 mm）。
 2. **URDF 没有的建模项**：`timestep`/`integrator`、geom 的 visual/collision 分组与
    `contype/conaffinity`、`<contact>` 的 exclude、`tcp` 与 `dh1..dh7` 站点。
    这些不影响质量、惯量、运动学。
