@@ -1,0 +1,5 @@
+pyserial>=3.5
+PySide6>=6.6
+pyqtgraph>=0.13.7
+numpy>=1.26
+# 可选：pip install mujoco  —— 仿真数据源使用 Simulation/mujoco/robot.xml 的真实动力学

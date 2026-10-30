@@ -1,0 +1,22 @@
+# armhost 配置。删掉某一项就用代码里的默认值。
+
+[serial]
+port = ""            # 留空 = 启动后在界面里选；也可以写 "COM5" / "/dev/ttyUSB0"
+baudrate = 921600
+
+[ui]
+buffer_seconds = 60   # 波形环形缓存时长（按 500 Hz 算容量）
+scope_fps = 30        # 波形刷新上限
+view3d_fps = 30       # 三维刷新上限
+default_window_s = 10
+
+[mock]
+rate_hz = 200         # 模拟设备上报频率
+
+[sim]
+rate_hz = 200
+prefer_mujoco = true  # 装了 mujoco 就用 robot.xml，否则用内置简化模型
+realtime = 1.0
+
+[log]
+level = "INFO"
