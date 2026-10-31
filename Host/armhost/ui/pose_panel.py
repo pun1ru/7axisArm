@@ -67,7 +67,9 @@ class DHEditor(QWidget):
             grid.addWidget(b, k // 3, k % 3)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        lay.addWidget(QLabel("改进 DH（Craig），第 i 行对应关节 Ji：T = RotX(α)·TransX(a)·RotZ(q+θ偏置)·TransZ(d)"))
+        title = QLabel("改进 DH（Craig），第 i 行对应关节 Ji：T = RotX(α)·TransX(a)·RotZ(q+θ偏置)·TransZ(d)")
+        title.setWordWrap(True)       # 不换行时这一行把整个窗口撑宽 800+ px
+        lay.addWidget(title)
         lay.addWidget(self.tbl, 1)
         lay.addWidget(self.auto)
         lay.addLayout(grid)

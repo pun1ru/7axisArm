@@ -45,12 +45,21 @@ ui (PySide6) ──► controller ──► model.backend ──► comm ──�
 
 ```bat
 cd Host
-pip install -r requirements.lock        :: 或 requirements.txt（宽松版本）
+py -3.11 -m pip install -r requirements.lock   :: 推荐 Python 3.11
 pip install mujoco                      :: 可选
 start_mock.bat                          :: 双击也行：模拟设备演示
 start.bat --sim                         :: 仿真
 start.bat --port COM5                   :: 真机
 ```
+
+`start.bat` 会优先选择 `py -3.11`。不要用 Python 3.14 + PySide6 6.11 运行实时波形：
+这组组合在 pyqtgraph 重绘时会偶发 Qt 原生 access violation，Python 层无法捕获。
+
+崩溃记录都在 `logs/`：
+
+- `crash.log`：faulthandler 的原始原生堆栈；
+- `crash_history.log`：下次启动时归档的历史原生崩溃；
+- `armhost.log`：上次异常退出摘要、未捕获异常和正常通信日志。
 
 串口：设备管理器 → 端口（COM 和 LPT）查看编号；USB 转串口需要装对应驱动（CH340 / CP210x）。
 

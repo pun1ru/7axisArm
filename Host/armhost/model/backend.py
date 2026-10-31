@@ -109,27 +109,76 @@ class SerialBackend(RobotBackend):
     def estop(self, latch: bool = True):
         return self.link.estop(latch)
 
+    def set_host_target(self, joint: int, target_deg: float, closed_loop: bool = False) -> Future:
+        return self.link.set_host_target(joint, target_deg, closed_loop)
+
+    def stop_host_loops(self) -> Future:
+        return self.link.stop_host_loops()
+
+    def _read_param_series(self, requests: list[tuple[int, int]]) -> Future:
+        """Read parameters sequentially to avoid overflowing the MCU reply queue."""
+        out: Future = Future()
+        values = [0] * len(requests)
+
+        def step(pos: int) -> None:
+            if pos >= len(requests):
+                if not out.done():
+                    out.set_result(values)
+                return
+            pid, index = requests[pos]
+            try:
+                future = self.link.read_param(pid, index)
+            except Exception as e:
+                if not out.done():
+                    out.set_exception(e)
+                return
+
+            def done(f):
+                try:
+                    values[pos] = f.result().value
+                except Exception as e:
+                    if not out.done():
+                        out.set_exception(e)
+                    return
+                step(pos + 1)
+
+            future.add_done_callback(done)
+
+        step(0)
+        return out
+
+    def read_limits(self) -> Future:
+        """Read [min_deg, max_deg] arrays for all joints from the firmware."""
+        n = self.link.device_info.joint_count if self.link.device_info else 7
+        requests = [(0x0102, i) for i in range(n)]
+        requests += [(0x0103, i) for i in range(n)]
+        series = self._read_param_series(requests)
+        out: Future = Future()
+
+        def done(f):
+            try:
+                values = f.result()
+                out.set_result((values[:n], values[n:]))
+            except Exception as e:
+                out.set_exception(e)
+
+        series.add_done_callback(done)
+        return out
+
     def read_dh(self) -> Future:
         """PARAM_READ 0x0400 × (关节数×4)，组装成 DHTable。返回 Future，不阻塞调用方。"""
         from ..kinematics import DHRow, DHTable
         n = self.link.device_info.joint_count if self.link.device_info else 7
-        futs = [self.link.read_param(0x0400, k) for k in range(n * 4)]
+        series = self._read_param_series([(0x0400, k) for k in range(n * 4)])
         out: Future = Future()
-        left = [len(futs)]
-        lock = threading.Lock()
 
-        def done(_f):
-            with lock:
-                left[0] -= 1
-                if left[0] or out.done():
-                    return
+        def done(f):
             try:
-                v = [f.result().value for f in futs]
+                v = f.result()
                 out.set_result(DHTable([DHRow(*v[4 * i:4 * i + 4]) for i in range(n)], f"设备 {self.label}"))
             except Exception as e:     # 任意一个参数失败就整体失败
                 out.set_exception(e)
-        for f in futs:
-            f.add_done_callback(done)
+        series.add_done_callback(done)
         return out
 
     def status(self) -> dict:

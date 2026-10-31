@@ -71,7 +71,7 @@ class JointTable(QTableWidget):
                 it.setFont(mono)
                 self.setItem(r, c, it)
         self._stale = True
-        self.setMinimumHeight(22 * joint_count + 46)
+        self.setMinimumHeight(70)           # 放不下时表格自己出滚动条；写死 7 行高度会把窗口最小高度撑到 1000+
 
     def update_sample(self, s: RobotSample | None) -> None:
         now = time.monotonic()

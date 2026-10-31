@@ -12,7 +12,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from .enums import AckResult, EstopAction, MsgType, ParamType
+from .enums import AckResult, EstopAction, HostTargetAction, MsgType, ParamType
 from .msg_link import DecodeError, as_enum, need
 
 _VALUE_FMT = {ParamType.U8: "<B3x", ParamType.I8: "<b3x", ParamType.U16: "<H2x",
@@ -91,6 +91,31 @@ class Estop:
     def decode(cls, p: bytes) -> "Estop":
         need(p, cls.S.size, "ESTOP")
         return cls(as_enum(EstopAction, cls.S.unpack_from(p)[0]))
+
+
+@dataclass(slots=True)
+class SetHostTarget:
+    """0 joint u8 | 1 action u8 | 2 reserved u16 | 4 target_deg f32
+
+    一帧只更新一个关节。SET_OPEN/SET_CLOSED 要求 joint in [0, 6]；
+    STOP_ALL 忽略 joint 和 target_deg，让全部关节退出闭环。"""
+    TYPE: ClassVar[int] = MsgType.SET_HOST_TARGET
+    S: ClassVar[struct.Struct] = struct.Struct("<BBHf")
+    joint: int = 0
+    action: HostTargetAction | int = HostTargetAction.SET_OPEN
+    target_deg: float = 0.0
+
+    def encode(self) -> bytes:
+        action = HostTargetAction(self.action)
+        if action != HostTargetAction.STOP_ALL and not 0 <= self.joint < 7:
+            raise ValueError(f"SET_HOST_TARGET joint {self.joint} out of range")
+        return self.S.pack(self.joint, int(action), 0, float(self.target_deg))
+
+    @classmethod
+    def decode(cls, p: bytes) -> "SetHostTarget":
+        need(p, cls.S.size, "SET_HOST_TARGET")
+        joint, action, _reserved, target_deg = cls.S.unpack_from(p)
+        return cls(joint, as_enum(HostTargetAction, action), target_deg)
 
 
 @dataclass(slots=True)

@@ -19,6 +19,7 @@ class MsgType(IntEnum):
     SET_JOINT_TORQUE = 0x20   # host -> mcu
     CLEAR_TORQUE = 0x21       # host -> mcu
     ESTOP = 0x22              # host -> mcu
+    SET_HOST_TARGET = 0x23    # host -> mcu
     # 0x28~0x2F 参数
     PARAM_READ = 0x28         # host -> mcu
     PARAM_WRITE = 0x29        # host -> mcu
@@ -34,6 +35,7 @@ class ArmState(IntEnum):
     MASTER = 3
     AUTO = 4
     SERVANT = 5
+    HOST = 6
 
 
 class ArmRole(IntEnum):
@@ -70,6 +72,7 @@ class StatusFlag(IntFlag):
     ESTOP_LATCHED = 0x0004
     HOST_TORQUE_ACTIVE = 0x0008   # 至少一个关节的上位机力矩设定在有效期内
     CTRL_ALIGN_PENDING = 0x0010
+    HOST_CLOSED_LOOP = 0x0020
 
 
 class JointFlag(IntFlag):
@@ -78,6 +81,15 @@ class JointFlag(IntFlag):
     AT_LIMIT = 0x02           # 目标被工作区间截断
     HOST_TORQUE_VALID = 0x04  # 本关节有未过期的上位机力矩设定
     TORQUE_CLAMPED = 0x08     # 设定值被限幅
+    HOST_TARGET_VALID = 0x10  # Host 目标已保存
+    HOST_CLOSED_LOOP = 0x20   # 该关节 Host 角度闭环已投入
+
+
+class HostTargetAction(IntEnum):
+    """SET_HOST_TARGET 的 action，同 host.h HOST_TARGET_ACTION_*"""
+    SET_OPEN = 0              # 只保存目标，该关节不闭环
+    SET_CLOSED = 1            # 保存目标，该关节投入闭环
+    STOP_ALL = 2              # 全部关节退出闭环，目标保留
 
 
 class AckResult(IntEnum):

@@ -61,12 +61,13 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 0x02 | DEVICE_INFO_REQ | H→M | 连接后 | DEVICE_INFO |
 | 0x03 | DEVICE_INFO | M→H | 应答 | — |
 | 0x04 | ACK | M→H | 应答 | — |
-| 0x10 | JOINT_STATE | M→H | 周期，默认 200 Hz | 无 |
+| 0x10 | JOINT_STATE | M→H | 周期，默认 100 Hz | 无 |
 | 0x11 | SYSTEM_STATUS | M→H | 周期，默认 10 Hz | 无 |
 | 0x12 | EVENT | M→H | 事件触发 | 无 |
 | 0x20 | SET_JOINT_TORQUE | H→M | ≥ 20 Hz 持续刷新 | ACK（ACK_REQ 置位时） |
 | 0x21 | CLEAR_TORQUE | H→M | 按需 | ACK |
 | 0x22 | ESTOP | H→M | 按需 | ACK |
+| 0x23 | SET_HOST_TARGET | H→M | 按需 | ACK |
 | 0x28 | PARAM_READ | H→M | 按需 | PARAM_VALUE |
 | 0x29 | PARAM_WRITE | H→M | 按需 | PARAM_VALUE |
 | 0x2A | PARAM_VALUE | M→H | 应答 | — |
@@ -103,16 +104,26 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 3 | u8 | result | 0 OK，1 OK_CLAMPED，2 REJECT_ESTOP，3 BAD_PARAM，4 BAD_LENGTH，5 UNSUPPORTED，6 READ_ONLY，7 BUSY |
 | 4 | u32 | detail | SET_JOINT_TORQUE：被限幅关节的位掩码；其余命令为 0 |
 
+### 0x23 SET_HOST_TARGET（8 B，单关节）
+| 偏移 | 类型 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | u8 | joint | 目标关节 0~6；STOP_ALL 时忽略 |
+| 1 | u8 | action | 0 SET_OPEN：保存目标、该关节不闭环；1 SET_CLOSED：保存目标并闭环；2 STOP_ALL：全部关节退出闭环、目标保留 |
+| 2 | u16 | reserved | 0 |
+| 4 | f32 | target_deg | 该关节单圈绝对目标角，必须位于固件 `ArmJointLimit_t` 内；STOP_ALL 时忽略 |
+
+一帧只更新一个关节，未列出的关节保持原目标和原闭环状态。只有 `arm_state == HOST`（左上 + 右下拨杆）时接受 SET_OPEN / SET_CLOSED。固件会再检查一次限位，越界或状态不符回 `BAD_PARAM`；成功回 `ACK`。目标命令不自动重试，链路超过 300 ms 没有有效帧时全部关节自动退出闭环。`STOP_ALL` 是安全命令，任何状态都接受。
+
 ### 0x10 JOINT_STATE（12 + N×28 B，N=7 时 208 B，整帧 219 B）
 | 偏移 | 类型 | 字段 | 说明 |
 |---|---|---|---|
 | 0 | u32 | mcu_time_us | 本次观测的采样时刻 |
-| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT |
+| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT 6 HOST |
 | 5 | u8 | joint_count | N |
 | 6 | u8 | record_size | 每条关节记录的字节数，v1.0 = 28；接收方按它步进，兼容以后加长 |
 | 7 | u8 | reserved | 0 |
-| 8 | u16 | status_flags | bit0 RC_ONLINE，bit1 HOST_LINK_OK，bit2 ESTOP_LATCHED，bit3 HOST_TORQUE_ACTIVE，bit4 CTRL_ALIGN_PENDING |
-| 10 | u16 | host_cmd_age_ms | 距上一条有效 SET_JOINT_TORQUE 的时间，饱和到 65535（=从未收到） |
+| 8 | u16 | status_flags | bit0 RC_ONLINE，bit1 HOST_LINK_OK，bit2 ESTOP_LATCHED，bit3 HOST_TORQUE_ACTIVE，bit4 CTRL_ALIGN_PENDING，bit5 HOST_CLOSED_LOOP |
+| 10 | u16 | host_cmd_age_ms | 距上一条有效上位机控制命令（SET_JOINT_TORQUE / SET_HOST_TARGET）的时间，饱和到 65535（=从未收到） |
 | 12 | rec[N] | joints | |
 
 关节记录（28 B），对应固件字段：
@@ -127,7 +138,7 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 22 | u8 | motor_status | MotorStatus_t（0 DISABLED … 10 NO_FEEDBACK） |
 | 23 | u8 | error_id | `feedback.error_id` |
 | 24 | i8 | temperature_c | `feedback.temp` |
-| 25 | u8 | joint_flags | bit0 ONLINE，bit1 AT_LIMIT，bit2 HOST_TORQUE_VALID，bit3 TORQUE_CLAMPED |
+| 25 | u8 | joint_flags | bit0 ONLINE，bit1 AT_LIMIT，bit2 HOST_TORQUE_VALID，bit3 TORQUE_CLAMPED，bit4 HOST_TARGET_VALID，bit5 HOST_CLOSED_LOOP（本关节闭环） |
 | 26 | u16 | feedback_count | `feedback.timestamp` 低 16 位，不增长说明电机没回包 |
 
 ### 0x11 SYSTEM_STATUS（32 + 2T + 12C B）
@@ -223,6 +234,7 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 4. **限幅**：`|τ| ≤ min(host_torque_limit_nm[i], 编译期硬上限[i])`，超限截断，ACK 返回 OK_CLAMPED 并给出被截断关节的掩码。限幅值是固件编译期常量，上位机不能改；**填 0 则上位机永远出不了力**，要用上位机力矩必须先在固件里给非零值。
 5. **急停**：ESTOP(1) 清全部设定并锁存，锁存期间 SET_JOINT_TORQUE 一律回 REJECT_ESTOP；只有 ESTOP(0) 能解除，链路恢复也不会自动解除。遥控的保护档仍然最高优先。
 6. **上位机侧**：断线时所有等待应答的命令立刻失败；力矩命令**不重试**、不缓存，重连后不补发。上位机退出前发 ESTOP(1) + CLEAR_TORQUE。
+7. **Host 角度目标**：只在 `ARM_HOST` 状态接受，绝对目标逐轴检查 `ArmJointLimit_t`，再映射到当前多圈。`closed_loop=0` 时保持零力矩；闭环投入后若 300 ms 没收到任何有效帧，固件自动退出闭环并清 PID。
 
 ## 8. 错误处理
 
@@ -305,4 +317,4 @@ A5 5A 10 10 FF FF 28 00 1B
 ## 12. 实现
 
 * Python：编解码在 `armhost/protocol/`，单元测试在 `tests/test_protocol.py`。
-* STM32 HAL C：打包、流式解包、CRC 在 `firmware_ref/arm_proto.{h,c}`，和固件对接的示例在 `firmware_ref/arm_proto_port.c`。**没有放进 `Real/`**，要不要移植由你决定。
+* STM32 HAL C：打包、流式解包、CRC 的参考实现在 `firmware_ref/arm_proto.{h,c}`；实际固件收发在 `Real/DIYcontroller/LibSE/Module/Host/host.{h,c}`，UART 中断只校验入队，Arm 写入、应答和上报都在发送任务执行。

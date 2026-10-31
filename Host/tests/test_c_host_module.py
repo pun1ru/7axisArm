@@ -68,8 +68,15 @@ class TestHostModuleSync(unittest.TestCase):
         self.assertEqual(macro("HOST_CMD_AGE_NONE"), 0xFFFF)
 
     def test_flags_and_fixed_size(self):
+        self.assertEqual(macro("HOST_FLAG_RC_ONLINE"), int(StatusFlag.RC_ONLINE))
         self.assertEqual(macro("HOST_FLAG_CTRL_ALIGNING"), int(StatusFlag.CTRL_ALIGN_PENDING))
+        self.assertEqual(macro("HOST_FLAG_HOST_CLOSED_LOOP"), int(StatusFlag.HOST_CLOSED_LOOP))
         self.assertEqual(macro("HOST_JOINT_FLAG_ONLINE"), int(JointFlag.ONLINE))
+        self.assertEqual(macro("HOST_JOINT_FLAG_HOST_TARGET_VALID"), int(JointFlag.HOST_TARGET_VALID))
+        self.assertEqual(macro("HOST_JOINT_FLAG_HOST_CLOSED_LOOP"), int(JointFlag.HOST_CLOSED_LOOP))
+        self.assertEqual(macro("HOST_SET_HOST_TARGET_SIZE"), 8)
+        self.assertEqual([macro(f"HOST_TARGET_ACTION_{n}") for n in
+                          ("SET_OPEN", "SET_CLOSED", "STOP_ALL")], [0, 1, 2])
         self.assertEqual(7 * macro("HOST_JOINT_RECORD_SIZE") + macro("HOST_JOINT_STATE_HEAD_SIZE"), 208)
         self.assertLessEqual(219, 256)
         self.assertIn("ARM_JOINT_COUNT", H)

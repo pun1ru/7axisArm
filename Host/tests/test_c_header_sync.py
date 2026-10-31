@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from armhost.protocol import MAX_FRAME, MAX_PAYLOAD, PROTO_VERSION, MsgType  # noqa: E402
-from armhost.protocol.enums import AckResult, EventCode, JointFlag, ParamType, StatusFlag  # noqa: E402
+from armhost.protocol.enums import (AckResult, EventCode, HostTargetAction, JointFlag, ParamType,  # noqa: E402
+                                    StatusFlag)
 from armhost.protocol.msg_report import JointRecord, JointState, SystemStatus  # noqa: E402
 from armhost.protocol.params import BY_NAME  # noqa: E402
 
@@ -54,8 +55,14 @@ class TestCHeaderSync(unittest.TestCase):
               "CTRL_ALIGN_PENDING": "ARM_SF_CTRL_ALIGN_PENDING"}
         for py, c in sf.items():
             self.assertEqual(c_value(c), int(StatusFlag[py]))
-        for f in ("ONLINE", "AT_LIMIT", "HOST_TORQUE_VALID", "TORQUE_CLAMPED"):
+        for f in ("ONLINE", "AT_LIMIT", "HOST_TORQUE_VALID", "TORQUE_CLAMPED",
+                  "HOST_TARGET_VALID", "HOST_CLOSED_LOOP"):
             self.assertEqual(c_value(f"ARM_JF_{f}"), int(JointFlag[f]))
+
+    def test_host_target_actions(self):
+        c = c_enum_seq("ARM_HOST_ACTION_SET_OPEN", [])
+        for a in HostTargetAction:
+            self.assertEqual(c[f"ARM_HOST_ACTION_{a.name}"], int(a))
 
     def test_events(self):
         for e in EventCode:

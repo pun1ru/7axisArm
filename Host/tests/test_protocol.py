@@ -11,10 +11,10 @@ from armhost.protocol import (MAX_PAYLOAD, Ack, AckResult, ArmState, CanBusStatu
                               DecodeError, DeviceInfo, Estop, EstopAction, Event, EventCode,
                               FrameParser, Heartbeat, JointFlag, JointRecord, JointState,
                               MotorStatus, MsgType, ParamRead, ParamValue, ParamWrite, RawMessage,
-                              SetJointTorque, StatusFlag, SystemStatus, TorqueItem, decode_frame,
-                              decode_payload, encode_frame)
+                              SetHostTarget, SetJointTorque, StatusFlag, SystemStatus, TorqueItem,
+                              decode_frame, decode_payload, encode_frame)
 from armhost.protocol.crc import crc8, crc16  # noqa: E402
-from armhost.protocol.enums import ParamType  # noqa: E402
+from armhost.protocol.enums import HostTargetAction, ParamType  # noqa: E402
 
 
 def sample_joint_state(n=7):
@@ -161,12 +161,25 @@ class TestMessages(unittest.TestCase):
                                [0, 1, 2], [CanBusStatus(1, 2, 3, 4, 5)] * 3),
                   Event(1, EventCode.MOTOR_FAULT, 2, 3, -4),
                   SetJointTorque(100, [TorqueItem(0, 1.5), TorqueItem(6, -0.5)]),
+                  SetHostTarget(3, HostTargetAction.SET_CLOSED, 12.5),
                   ClearTorque(0x7F), Estop(EstopAction.LATCH), Estop(EstopAction.RELEASE),
                   ParamRead(0x200, 3), ParamWrite(0x200, 3, ParamType.F32, 1.5),
                   ParamWrite(0x0001, 0, ParamType.U16, 200),
                   ParamValue(9, 0x0101, 2, ParamType.I8, AckResult.OK, 1, -1)]:
             with self.subTest(type(m).__name__):
                 self.roundtrip(m)
+
+    def test_host_target_is_single_joint_8_bytes(self):
+        p = SetHostTarget(3, HostTargetAction.SET_CLOSED, 12.5).encode()
+        self.assertEqual(len(p), 8)
+        m = decode_payload(MsgType.SET_HOST_TARGET, p)
+        self.assertEqual((m.joint, m.action, m.target_deg), (3, HostTargetAction.SET_CLOSED, 12.5))
+        self.assertEqual(SetHostTarget(0, HostTargetAction.STOP_ALL, 0.0).encode(),
+                         struct.pack("<BBHf", 0, 2, 0, 0.0))
+        with self.assertRaises(ValueError):
+            SetHostTarget(7, HostTargetAction.SET_OPEN, 0.0).encode()
+        with self.assertRaises(DecodeError):
+            decode_payload(MsgType.SET_HOST_TARGET, bytes(7))
 
     def test_short_payload_raises(self):
         with self.assertRaises(DecodeError):

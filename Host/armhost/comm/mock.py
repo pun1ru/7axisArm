@@ -20,9 +20,9 @@ from dataclasses import dataclass, field
 from ..protocol import (Ack, AckResult, ArmRole, ArmState, CanBusStatus, ClearTorque, DeviceInfo,
                         DeviceInfoReq, Estop, EstopAction, Event, EventCode, FrameParser,
                         Heartbeat, JointFlag, JointRecord, JointState, MotorStatus, ParamRead,
-                        ParamValue, ParamWrite, SetJointTorque, Severity, StatusFlag,
+                        ParamValue, ParamWrite, SetHostTarget, SetJointTorque, Severity, StatusFlag,
                         SystemStatus, decode_frame, encode_frame)
-from ..protocol.enums import ParamType
+from ..protocol.enums import HostTargetAction, ParamType
 from ..protocol.params import BY_ID, W
 
 try:
@@ -55,6 +55,7 @@ class SimJoint:
     host_deadline: float = 0.0
     host_limit: float = 2.0       # 只读：模拟固件编译期常量（演示给 2 N*m；真机填 0 即禁止上位机出力）
     clamped: bool = False
+    host_target: float = 0.0
 
 
 class SimDevice:
@@ -75,6 +76,8 @@ class SimDevice:
         self.rng = random.Random(self.faults.seed)
         self.joints = [SimJoint() for _ in range(joint_count)]
         self.arm_state = ArmState.ENABLE
+        self.host_closed_loop_mask = 0
+        self.host_target_valid_mask = 0
         self.rc_online = True
         self.estop = False
         self.mute = False                 # True 时停止一切输出（模拟设备卡死）
@@ -146,6 +149,7 @@ class SimDevice:
                 for j in self.joints:
                     j.host_tau = 0.0
                     j.host_deadline = 0.0
+                self.host_closed_loop_mask = 0
             self._link_ok = link_ok
             self._emit(Event(self._us(), EventCode.HOST_LINK_RESTORED if link_ok else EventCode.HOST_LINK_LOST,
                              Severity.INFO if link_ok else Severity.WARN, 0, 0))
@@ -163,6 +167,7 @@ class SimDevice:
         for i, j in enumerate(self.joints):
             applied = j.host_tau if (self.arm_state == ArmState.ENABLE and self.rc_online
                                      and self._host_tau_active(j, now)) else 0.0
+            host_cmd = 0.0
             if self.motion:
                 base = 30.0 * math.sin(2 * math.pi * 0.2 * t + i * 0.7)
                 dbase = 30.0 * 2 * math.pi * 0.2 * math.cos(2 * math.pi * 0.2 * t + i * 0.7)
@@ -171,11 +176,16 @@ class SimDevice:
             j.dq += (applied * 200.0 - j.dq * 2.0) * dt     # 外加力矩带来的附加运动
             extra = j.q - getattr(j, "_base", 0.0)
             extra += j.dq * dt
+            loop_active = bool(self.host_closed_loop_mask & (1 << i))
+            if self.arm_state == ArmState.HOST and loop_active and self.rc_online:
+                error = j.host_target - j.q
+                extra += max(-60.0 * dt, min(60.0 * dt, error))
+                host_cmd = max(-j.host_limit, min(j.host_limit, error * 0.02))
             j._base = base                                    # type: ignore[attr-defined]
             j.q = max(-179.9, min(180.0, base + extra))
-            j.tau_fb = applied + 0.02 * math.sin(t * 7 + i)
+            j.tau_fb = applied + host_cmd + 0.02 * math.sin(t * 7 + i)
             j._dq_total = dbase + j.dq                        # type: ignore[attr-defined]
-            j._applied = applied                              # type: ignore[attr-defined]
+            j._applied = applied + host_cmd                   # type: ignore[attr-defined]
 
     def _flags(self, now: float) -> StatusFlag:
         f = StatusFlag.NONE
@@ -187,6 +197,8 @@ class SimDevice:
             f |= StatusFlag.ESTOP_LATCHED
         if any(self._host_tau_active(j, now) for j in self.joints):
             f |= StatusFlag.HOST_TORQUE_ACTIVE
+        if self.arm_state == ArmState.HOST and self.host_closed_loop_mask:
+            f |= StatusFlag.HOST_CLOSED_LOOP
         return f
 
     def _joint_state(self, now: float) -> JointState:
@@ -197,10 +209,15 @@ class SimDevice:
                 jf |= JointFlag.HOST_TORQUE_VALID
             if j.clamped:
                 jf |= JointFlag.TORQUE_CLAMPED
+            if self.arm_state == ArmState.HOST and self.host_target_valid_mask & (1 << i):
+                jf |= JointFlag.HOST_TARGET_VALID
+            if self.arm_state == ArmState.HOST and self.host_closed_loop_mask & (1 << i):
+                jf |= JointFlag.HOST_CLOSED_LOOP
             enc = (_ZERO[i % 7] + int(_DIR[i % 7] * j.q / 360.0 * 65536)) & 0xFFFF
             recs.append(JointRecord(round(j.q, 4), getattr(j, "_dq_total", 0.0), j.tau_fb, j.q,
                                     getattr(j, "_applied", 0.0), enc,
-                                    MotorStatus.ENABLED if self.arm_state == ArmState.ENABLE else MotorStatus.DISABLED,
+                                    MotorStatus.ENABLED if self.arm_state in (ArmState.ENABLE, ArmState.HOST)
+                                    else MotorStatus.DISABLED,
                                     0, 35 + i, jf, int(now * self.state_rate_hz) & 0xFFFF))
         age = min(0xFFFF, max(0, int((now - self._last_cmd) * 1000))) if self._last_cmd else 0xFFFF
         return JointState(self._tick_us(now), self.arm_state, self._flags(now), age, recs)
@@ -301,6 +318,27 @@ class SimDevice:
                 j.host_deadline = now + hold
             self._last_cmd = now
             return Ack(seq, m.TYPE, AckResult.OK_CLAMPED if mask else AckResult.OK, mask)
+        if isinstance(m, SetHostTarget):
+            if m.action == HostTargetAction.STOP_ALL:
+                self.host_closed_loop_mask = 0
+                self._last_cmd = now
+                return Ack(seq, m.TYPE, AckResult.OK, 0)
+            if self.arm_state != ArmState.HOST or m.action not in (
+                    HostTargetAction.SET_OPEN, HostTargetAction.SET_CLOSED):
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            if not 0 <= m.joint < self.n or not math.isfinite(m.target_deg):
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            lo, hi = self.limit[0x0102][m.joint], self.limit[0x0103][m.joint]
+            if not lo <= m.target_deg <= hi:
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            self.joints[m.joint].host_target = float(m.target_deg)
+            self.host_target_valid_mask |= 1 << m.joint
+            if m.action == HostTargetAction.SET_CLOSED:
+                self.host_closed_loop_mask |= 1 << m.joint
+            else:
+                self.host_closed_loop_mask &= ~(1 << m.joint)
+            self._last_cmd = now
+            return Ack(seq, m.TYPE, AckResult.OK, 0)
         if isinstance(m, ClearTorque):
             for i, j in enumerate(self.joints):
                 if m.joint_mask >> i & 1:

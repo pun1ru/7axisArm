@@ -54,6 +54,11 @@ QTabBar::tab:selected {{ background: {BG}; color: white; }}
 QLabel#value {{ font-family: Consolas, "DejaVu Sans Mono", monospace; }}
 QLabel#title {{ color: {MUTED}; }}
 QSplitter::handle {{ background: {BORDER}; }}
+QSplitter::handle:horizontal {{ width: 6px; }}
+QSplitter::handle:vertical {{ height: 6px; }}
+QSplitter::handle:hover {{ background: {ACCENT}; }}
+QMainWindow::separator {{ background: {BORDER}; width: 6px; height: 6px; }}
+QMainWindow::separator:hover {{ background: {ACCENT}; }}
 """
 
 

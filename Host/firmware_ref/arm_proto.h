@@ -36,6 +36,7 @@ enum {
     ARM_MSG_SET_JOINT_TORQUE = 0x20,
     ARM_MSG_CLEAR_TORQUE     = 0x21,
     ARM_MSG_ESTOP            = 0x22,
+    ARM_MSG_SET_HOST_TARGET  = 0x23,
     ARM_MSG_PARAM_READ       = 0x28,
     ARM_MSG_PARAM_WRITE      = 0x29,
     ARM_MSG_PARAM_VALUE      = 0x2A,
@@ -52,11 +53,21 @@ enum {
 #define ARM_SF_ESTOP_LATCHED       0x0004U
 #define ARM_SF_HOST_TORQUE_ACTIVE  0x0008U
 #define ARM_SF_CTRL_ALIGN_PENDING  0x0010U
+#define ARM_SF_HOST_CLOSED_LOOP    0x0020U
 /* joint_flags */
 #define ARM_JF_ONLINE              0x01U
 #define ARM_JF_AT_LIMIT            0x02U
 #define ARM_JF_HOST_TORQUE_VALID   0x04U
 #define ARM_JF_TORQUE_CLAMPED      0x08U
+#define ARM_JF_HOST_TARGET_VALID   0x10U
+#define ARM_JF_HOST_CLOSED_LOOP    0x20U
+
+/* SET_HOST_TARGET action */
+enum {
+    ARM_HOST_ACTION_SET_OPEN = 0,
+    ARM_HOST_ACTION_SET_CLOSED,
+    ARM_HOST_ACTION_STOP_ALL,
+};
 
 enum {
     ARM_EV_BOOT = 0x01, ARM_EV_ARM_STATE_CHANGED = 0x02,

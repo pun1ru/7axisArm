@@ -10,11 +10,11 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
-                               QHeaderView, QLabel, QPlainTextEdit, QPushButton, QSlider,
+                               QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSlider,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..model import ChannelStats
-from ..model.recorder import CsvRecorder
+from ..model.recorder import CsvRecorder, SnapshotRecorder
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
@@ -25,9 +25,11 @@ class RecordPanel(QWidget):
     replay_pause = Signal(bool)
     replay_seek = Signal(float)
 
-    def __init__(self, recorder: CsvRecorder, parent=None) -> None:
+    def __init__(self, recorder: CsvRecorder, snapshot: SnapshotRecorder, latest_fn, parent=None) -> None:
         super().__init__(parent)
         self.recorder = recorder
+        self.snapshot = snapshot
+        self.latest_fn = latest_fn
         # ---- 记录
         self.rec_btn = QPushButton("● 开始记录")
         self.rec_btn.setCheckable(True)
@@ -38,6 +40,14 @@ class RecordPanel(QWidget):
         self.open_dir_btn.setToolTip("选择记录文件位置；不选则自动存到 Host/logs/")
         self.open_dir_btn.clicked.connect(self._choose_path)
         self._next_path: Path | None = None
+        self.snapshot_btn = QPushButton("采集一点")
+        self.snapshot_btn.setToolTip("把当前时刻收到的完整 7 关节数据追加到重力辨识 CSV")
+        self.snapshot_btn.clicked.connect(self._capture_snapshot)
+        self.snapshot_new_btn = QPushButton("新数据集")
+        self.snapshot_new_btn.setToolTip("关闭当前快照文件，下次采集时新建一个 CSV")
+        self.snapshot_new_btn.clicked.connect(self._new_snapshot)
+        self.snapshot_info = QLabel("未开始")
+        self.snapshot_info.setObjectName("value")
         # ---- 回放
         self.load_btn = QPushButton("打开 CSV 回放…")
         self.load_btn.clicked.connect(self._choose_replay)
@@ -63,6 +73,11 @@ class RecordPanel(QWidget):
         r1.addWidget(self.rec_btn)
         r1.addWidget(self.open_dir_btn)
         r1.addWidget(self.rec_info, 1)
+        r3 = QHBoxLayout()
+        r3.addWidget(QLabel("重力辨识"))
+        r3.addWidget(self.snapshot_btn)
+        r3.addWidget(self.snapshot_new_btn)
+        r3.addWidget(self.snapshot_info, 1)
         r2 = QHBoxLayout()
         r2.addWidget(QLabel("回放"))
         r2.addWidget(self.load_btn)
@@ -74,6 +89,7 @@ class RecordPanel(QWidget):
         r2.addWidget(self.replay_info)
         lay = QVBoxLayout(self)
         lay.addLayout(r1)
+        lay.addLayout(r3)
         lay.addLayout(r2)
         note = QLabel("CSV 同时保存 MCU 采样时刻 mcu_time_us 与上位机接收时刻 host_time_ns；"
                       "回放按 MCU 时间节奏重放。")
@@ -109,6 +125,31 @@ class RecordPanel(QWidget):
     def stop_recording(self) -> None:
         if self.rec_btn.isChecked():
             self.rec_btn.setChecked(False)
+
+    def _new_snapshot(self) -> None:
+        if self.snapshot.active:
+            self.snapshot.stop()
+            self.snapshot_info.setText(f"已结束 {self.snapshot.path.name if self.snapshot.path else ''}"
+                                       f"  {self.snapshot.rows} 个点")
+
+    def _capture_snapshot(self) -> None:
+        try:
+            sample = self.latest_fn()
+            if sample is None:
+                QMessageBox.information(self, "采集一点", "还没有收到关节数据")
+                return
+            if not self.snapshot.active:
+                directory = LOG_DIR / "gravity"
+                directory.mkdir(parents=True, exist_ok=True)
+                path = directory / datetime.now().strftime("gravity_%Y%m%d_%H%M%S.csv")
+                self.snapshot.start(path)
+            ok = self.snapshot.capture(sample)
+            if ok:
+                self.snapshot_info.setText(f"{self.snapshot.path.name}  {self.snapshot.rows} 个点")
+            elif self.snapshot.error:
+                QMessageBox.warning(self, "采集失败", self.snapshot.error)
+        except Exception as e:
+            QMessageBox.warning(self, "采集失败", str(e))
 
     def _choose_replay(self) -> None:
         p, _ = QFileDialog.getOpenFileName(self, "选择记录文件", str(LOG_DIR), "CSV (*.csv)")

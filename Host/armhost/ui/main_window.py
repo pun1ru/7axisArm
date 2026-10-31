@@ -15,7 +15,10 @@ from ..model import channel_stats, timing_stats
 from ..model.backend import MockBackend, ReplayBackend, SerialBackend
 from ..model.sim import SimBackend
 from . import theme
+from .gravity_panel import GravityFitPanel
+from .host_panel import HostPanel
 from .joint_table import JointTable
+from .layout_util import scrollable
 from .panels import HexPanel, LogView, RecordPanel, StatsTable
 from .pose_panel import PosePanel
 from .scope import ScopeWidget
@@ -37,7 +40,7 @@ class MonitorWindow(QMainWindow):
         from ..config import DEFAULTS
         self.cfg = config or DEFAULTS
         self.setWindowTitle("七轴机械臂上位机 — 监视")
-        self.resize(1500, 920)
+        self._fit_to_screen(1500, 920)
         self.ctrl = ctrl or MonitorController(joint_count=joint_count)
         self._hex_last_ns = 0
 
@@ -101,27 +104,39 @@ class MonitorWindow(QMainWindow):
         split.addWidget(self.table)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
+        self.center_split = split                 # 保持 Qt 默认：可折叠到 0，把手（6px）仍可拖回
         self.setCentralWidget(split)
 
         # ---------------------------------------------------------- 右侧状态
         self.status_panel = StatusPanel()
         dock = QDockWidget("状态", self)
         dock.setObjectName("status_dock")
-        dock.setWidget(self.status_panel)
+        dock.setWidget(scrollable(self.status_panel))
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
+        self.host = HostPanel(self.ctrl, joint_count)
+        host_dock = QDockWidget("Host 目标", self)
+        host_dock.setObjectName("host_dock")
+        host_dock.setWidget(scrollable(self.host))
+        host_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        self.addDockWidget(Qt.RightDockWidgetArea, host_dock)
+        self.splitDockWidget(dock, host_dock, Qt.Vertical)
+
         # ---------------------------------------------------------- 底部标签
-        self.record = RecordPanel(self.ctrl.recorder)
+        self.record = RecordPanel(self.ctrl.recorder, self.ctrl.snapshot, self.ctrl.latest)
         self.record.replay_requested.connect(self._start_replay)
         self.record.replay_pause.connect(self._replay_pause)
         self.record.replay_seek.connect(self._replay_seek)
+        self.gravity = GravityFitPanel(lambda: self.pose.view.table)
         self.stats = StatsTable()
         self.events = LogView()
         self.hex = HexPanel()
         self.hex.enable.toggled.connect(self._hex_toggle)
         tabs = QTabWidget()
         tabs.addTab(self.record, "记录 / 回放")
+        self.gravity_tab = scrollable(self.gravity)
+        tabs.addTab(self.gravity_tab, "重力拟合")
         tabs.addTab(self.stats, "统计")
         tabs.addTab(self.events, "事件")
         tabs.addTab(self.hex, "原始数据")
@@ -131,8 +146,8 @@ class MonitorWindow(QMainWindow):
         bdock.setWidget(tabs)
         bdock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.BottomDockWidgetArea, bdock)
-        self.resizeDocks([bdock], [200], Qt.Vertical)
-        self.resizeDocks([dock], [330], Qt.Horizontal)
+        self.status_dock, self.tool_dock = dock, bdock
+        self._layout_done = False
 
         # ---------------------------------------------------------- 状态栏
         self.sb_conn = QLabel()
@@ -153,6 +168,30 @@ class MonitorWindow(QMainWindow):
         self._on_src()
         self.estop_btn.setEnabled(False)      # 连上支持急停的数据源后才可用
         self.release_btn.setEnabled(False)
+
+    # ================================================================ 布局
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        if not self._layout_done:
+            self._layout_done = True
+            QTimer.singleShot(0, self._apply_default_layout)       # 等窗口有了真实尺寸再分配
+
+    def _apply_default_layout(self) -> None:
+        """默认分区按当前窗口大小分配（构造时窗口还没尺寸，resizeDocks 会被最小尺寸吃掉）。"""
+        w, h = self.width(), self.height()
+        self.resizeDocks([self.tool_dock], [min(260, max(120, int(h * 0.26)))], Qt.Vertical)
+        self.resizeDocks([self.status_dock], [min(330, max(140, int(w * 0.22)))], Qt.Horizontal)
+        total = self.center_split.height()
+        want = min(self.table.rowCount() * 22 + 46, int(total * 0.3))
+        self.center_split.setSizes([max(1, total - want), max(1, want)])
+
+    def _fit_to_screen(self, w: int, h: int) -> None:
+        """初始窗口不超过当前屏幕可用区域（任务栏除外），小屏上不会一开始就溢出。"""
+        scr = QGuiApplication.primaryScreen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            w, h = min(w, g.width()), min(h, g.height())
+        self.resize(w, h)
 
     # ================================================================ 数据源
     def _on_src(self) -> None:
@@ -216,6 +255,9 @@ class MonitorWindow(QMainWindow):
             self.src.setCurrentIndex(self.src.findData(src))
             self.src.blockSignals(False)
         self.record.set_replay_active(replay)
+        self.host.set_connected(backend is not None and hasattr(backend, "set_host_target")
+                                and hasattr(backend, "stop_host_loops")
+                                and hasattr(backend, "read_limits"))
         if backend is None:
             self.src.setEnabled(True)
             self._on_src()
@@ -269,6 +311,7 @@ class MonitorWindow(QMainWindow):
     def _tick_fast(self) -> None:
         s = self.ctrl.latest()
         self.table.update_sample(s)
+        self.host.tick(s)
         st = self.ctrl.status()
         view = self.ctrl.buffer.view(3.0)
         timing = timing_stats(view)
@@ -311,8 +354,10 @@ class MonitorWindow(QMainWindow):
 
     # ================================================================ 关闭
     def closeEvent(self, ev) -> None:
+        log.info("main window close requested")
         if self.ctrl.recorder.active and QMessageBox.question(
                 self, "退出", "正在记录，确认停止记录并退出？") != QMessageBox.Yes:
+            log.info("main window close cancelled")
             ev.ignore()
             return
         for t in (self._t_fast, self._t_slow, self.scope.timer, self.pose.timer):
@@ -320,3 +365,4 @@ class MonitorWindow(QMainWindow):
         self.record.stop_recording()
         self.ctrl.shutdown()              # 串口后端：发急停 + 清零，再关线程
         super().closeEvent(ev)
+        log.info("main window closed")

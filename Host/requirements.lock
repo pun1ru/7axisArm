@@ -1,9 +1,11 @@
-# 已验证的精确版本（Python 3.14.5, Windows 10）。安装: pip install -r requirements.lock
+# 已验证的精确版本（Python 3.11.9, Windows 10）。安装: pip install -r requirements.lock
+# Python 3.14 + PySide6 6.11 在 pyqtgraph 重绘时会偶发原生 access violation，
+# start.bat 因此优先使用 Python 3.11；不要为此退回 PySide6 6.11。
 # 可选: mujoco（仿真用真实动力学，不装则用内置简化模型）
 pyserial==3.5
-PySide6==6.11.1
-PySide6_Essentials==6.11.1
-PySide6_Addons==6.11.1
-shiboken6==6.11.1
+PySide6==6.8.3
+PySide6_Essentials==6.8.3
+PySide6_Addons==6.8.3
+shiboken6==6.8.3
 pyqtgraph==0.14.0
-numpy==2.4.0
+numpy==2.4.6

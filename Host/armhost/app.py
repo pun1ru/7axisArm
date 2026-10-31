@@ -11,18 +11,24 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import logging
 import logging.handlers
+import os
 import sys
 import threading
 import traceback
 from pathlib import Path
 
+from .crashlog import begin_session, note_abnormal, versions
+
 LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 log = logging.getLogger("armhost")
+_crash_file = None
 
 
 def setup_logging(level: str = "INFO") -> None:
+    global _crash_file
     LOG_DIR.mkdir(exist_ok=True)
     root = logging.getLogger()
     root.setLevel(level)
@@ -30,10 +36,16 @@ def setup_logging(level: str = "INFO") -> None:
     fh = logging.handlers.RotatingFileHandler(LOG_DIR / "armhost.log", maxBytes=5 << 20, backupCount=5,
                                               encoding="utf-8")
     fh.setFormatter(fmt)
-    sh = logging.StreamHandler()
-    sh.setFormatter(fmt)
     root.addHandler(fh)
-    root.addHandler(sh)
+    if sys.stderr is not None:
+        sh = logging.StreamHandler()
+        sh.setFormatter(fmt)
+        root.addHandler(sh)
+    try:
+        _crash_file = open(LOG_DIR / "crash.log", "a", encoding="utf-8")
+        faulthandler.enable(file=_crash_file, all_threads=True)
+    except OSError:
+        _crash_file = None
 
 
 def install_excepthook() -> None:
@@ -51,6 +63,7 @@ def install_excepthook() -> None:
             sys.__excepthook__(et, ev, tb)
             return
         text = "".join(traceback.format_exception(et, ev, tb))
+        note_abnormal(f"{et.__name__}: {ev}")
         log.critical("未捕获异常\n%s", text)
         show(text)
 
@@ -82,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
         cfg, cfg_err = config.DEFAULTS, str(e)
     setup_logging(a.log or cfg["log"]["level"])
     install_excepthook()
+    begin_session(LOG_DIR, log)
+    v = versions()
+    log.info("armhost starting pid=%d python=%s pyside=%s pyqtgraph=%s numpy=%s",
+             os.getpid(), v.get("python"), v.get("PySide6"), v.get("pyqtgraph"), v.get("numpy"))
 
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication(sys.argv[:1])
@@ -114,7 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         w._switch(SerialBackend.open_port(port, baud))
     elif a.replay:
         w._start_replay(a.replay, 1.0, False)
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        log.info("armhost event loop stopped")
+        logging.shutdown()
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ import numpy as np  # noqa: E402
 from armhost.controller import MonitorController  # noqa: E402
 from armhost.model import SampleBuffer, channel_stats, timing_stats  # noqa: E402
 from armhost.model.backend import MockBackend, ReplayBackend  # noqa: E402
-from armhost.model.recorder import CsvRecorder, load_csv  # noqa: E402
+from armhost.model.recorder import CsvRecorder, SnapshotRecorder, load_csv  # noqa: E402
 from armhost.model.state import RobotSample  # noqa: E402
 from armhost.protocol import JointRecord  # noqa: E402
 
@@ -88,6 +88,20 @@ class TestBuffer(unittest.TestCase):
 
 
 class TestRecorder(unittest.TestCase):
+    def test_snapshot_appends_one_row_per_click(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "gravity" / "point.csv"
+            r = SnapshotRecorder()
+            r.start(path)
+            for i in range(3):
+                self.assertTrue(r.capture(mk(i)))
+            r.stop()
+            self.assertEqual(r.rows, 3)
+            back = load_csv(path)
+            self.assertEqual(len(back), 3)
+            self.assertEqual(back[2].mcu_time_us, 10000)
+            self.assertAlmostEqual(back[1].joints[4].angle_deg, 5.0)
+
     def test_roundtrip_and_replay(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "a.csv"

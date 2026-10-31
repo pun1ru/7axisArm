@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from armhost.comm import (AckTimeoutError, ArmLink, CommandRejected, FaultConfig,  # noqa: E402
                           LinkLostError, LinkState, McuClock, SeqTracker, SimDevice,
                           make_mock_transport)
-from armhost.protocol import AckResult, ArmState, MsgType, StatusFlag  # noqa: E402
+from armhost.protocol import AckResult, ArmState, JointFlag, MsgType, StatusFlag  # noqa: E402
 
 
 def wait_until(pred, timeout=2.0):
@@ -124,6 +124,35 @@ class TestLink(LinkCase):
                     self.link.write_param(pid, 2, 123.0).result(1.0)
                 self.assertEqual(cm.exception.result, AckResult.READ_ONLY)
                 self.assertEqual(self.link.read_param(pid, 2).result(1.0).value, before.value)
+
+    def test_host_target_updates_one_joint_and_loop_mask(self):
+        self.dev.limit[0x0102] = [-90.0, -95.0, -180.0, -120.0, -180.0, -60.0, -180.0]
+        self.dev.limit[0x0103] = [90.0, 100.0, 180.0, 0.0, 180.0, 90.0, 180.0]
+        with self.assertRaises(CommandRejected):
+            self.link.set_host_target(0, 10.0, True).result(1.0)   # still ENABLE
+        self.dev.arm_state = ArmState.HOST
+        ack = self.link.set_host_target(0, 10.0, True).result(1.0)
+        self.assertEqual(ack.result, AckResult.OK)
+        self.assertEqual(self.dev.host_closed_loop_mask, 1 << 0)
+        self.assertEqual(self.dev.joints[0].host_target, 10.0)
+
+        ack = self.link.set_host_target(1, 20.0, False).result(1.0)
+        self.assertEqual(ack.result, AckResult.OK)
+        self.assertEqual(self.dev.host_closed_loop_mask, 1 << 0)  # J1 只存目标，不改变 J0
+        self.assertEqual((self.dev.joints[0].host_target, self.dev.joints[1].host_target), (10.0, 20.0))
+        self.assertTrue(wait_until(
+            lambda: StatusFlag.HOST_CLOSED_LOOP in self.link.mirror.snapshot().arm.status_flags))
+        with self.assertRaises(CommandRejected) as cm:
+            self.link.set_host_target(0, 91.0, True).result(1.0)
+        self.assertEqual(cm.exception.result, AckResult.BAD_PARAM)
+        self.assertEqual(self.dev.joints[0].host_target, 10.0)
+
+        self.assertEqual(self.link.stop_host_loops().result(1.0).result, AckResult.OK)
+        self.assertEqual(self.dev.host_closed_loop_mask, 0)
+        self.assertEqual(self.dev.joints[1].host_target, 20.0)
+        self.assertTrue(wait_until(
+            lambda: not (self.link.mirror.snapshot().arm.joint_flags[1]
+                         & JointFlag.HOST_CLOSED_LOOP)))
 
     def test_ack_timeout_and_retry(self):
         self.dev.ignore_types = {MsgType.PARAM_READ}

@@ -113,6 +113,70 @@ class CsvRecorder:
             log.error("CSV 写入失败: %s", e)
 
 
+class SnapshotRecorder:
+    """One CSV row per explicit capture, for gravity-identification poses.
+
+    The file is created on the first capture and stays open until stop() or a
+    new dataset is started. This is deliberately separate from CsvRecorder so
+    continuous recording remains unchanged.
+    """
+
+    def __init__(self) -> None:
+        self.path: Path | None = None
+        self.rows = 0
+        self.error: str | None = None
+        self._fp = None
+        self._writer = None
+        self._joint_count: int | None = None
+
+    @property
+    def active(self) -> bool:
+        return self._fp is not None
+
+    def start(self, path: str | Path) -> None:
+        self.stop()
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.error = None
+        self.rows = 0
+        self._joint_count = None
+        try:
+            self._fp = open(self.path, "w", newline="", encoding="utf-8")
+            self._writer = csv.writer(self._fp)
+        except OSError as e:
+            self.error = str(e)
+            self._fp = self._writer = None
+            raise
+
+    def capture(self, s: RobotSample) -> bool:
+        if self._fp is None or self._writer is None:
+            raise RuntimeError("snapshot recorder is not active")
+        try:
+            if self._joint_count is None:
+                self._joint_count = len(s.joints)
+                self._writer.writerow(header(self._joint_count))
+            if len(s.joints) != self._joint_count:
+                raise ValueError(f"joint count changed from {self._joint_count} to {len(s.joints)}")
+            self._writer.writerow(row(s))
+            self._fp.flush()
+            self.rows += 1
+            return True
+        except (OSError, ValueError) as e:
+            self.error = str(e)
+            log.error("snapshot write failed: %s", e)
+            return False
+
+    def stop(self) -> None:
+        if self._fp is not None:
+            try:
+                self._fp.close()
+            except OSError as e:
+                self.error = str(e)
+        self._fp = None
+        self._writer = None
+        self._joint_count = None
+
+
 def load_csv(path: str | Path) -> list[RobotSample]:
     with open(path, newline="", encoding="utf-8") as fp:
         r = csv.reader(fp)

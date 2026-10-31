@@ -21,9 +21,9 @@ from typing import Any, Callable
 
 from ..protocol import (Ack, AckResult, ClearTorque, DecodeError, DeviceInfo, DeviceInfoReq,
                         Estop, EstopAction, Frame, FrameFlag, FrameParser, Heartbeat, MsgType,
-                        ParamRead, ParamValue, ParamWrite, SetJointTorque, TorqueItem,
-                        decode_frame, encode_frame)
-from ..protocol.enums import ParamType
+                        ParamRead, ParamValue, ParamWrite, SetHostTarget, SetJointTorque,
+                        TorqueItem, decode_frame, encode_frame)
+from ..protocol.enums import HostTargetAction, ParamType
 from ..protocol.params import BY_ID
 from .hexlog import HexLog
 from .mirror import ArmMirror
@@ -153,6 +153,13 @@ class ArmLink:
 
     def clear_torque(self, joint_mask: int = 0xFFFFFFFF) -> Future:
         return self._request(ClearTorque(joint_mask))
+
+    def set_host_target(self, joint: int, target_deg: float, closed_loop: bool = False) -> Future:
+        action = HostTargetAction.SET_CLOSED if closed_loop else HostTargetAction.SET_OPEN
+        return self._request(SetHostTarget(int(joint), action, float(target_deg)), retries=0)
+
+    def stop_host_loops(self) -> Future:
+        return self._request(SetHostTarget(0, HostTargetAction.STOP_ALL, 0.0), retries=0)
 
     def estop(self, latch: bool = True) -> Future:
         return self._request(Estop(EstopAction.LATCH if latch else EstopAction.RELEASE))

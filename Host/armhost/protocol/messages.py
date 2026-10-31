@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .frame import Frame
-from .msg_cmd import (ClearTorque, Estop, ParamRead, ParamValue, ParamWrite, SetJointTorque,
-                      TorqueItem)
+from .msg_cmd import (ClearTorque, Estop, ParamRead, ParamValue, ParamWrite, SetHostTarget,
+                      SetJointTorque, TorqueItem)
 from .msg_link import DecodeError, DeviceInfo, DeviceInfoReq, Heartbeat
 from .msg_report import Ack, CanBusStatus, Event, JointRecord, JointState, SystemStatus
 
 MESSAGE_CLASSES = (Heartbeat, DeviceInfoReq, DeviceInfo, Ack, JointState, SystemStatus, Event,
-                   SetJointTorque, ClearTorque, Estop, ParamRead, ParamWrite, ParamValue)
+                   SetJointTorque, ClearTorque, Estop, SetHostTarget, ParamRead, ParamWrite,
+                   ParamValue)
 REGISTRY = {int(c.TYPE): c for c in MESSAGE_CLASSES}
 
 
@@ -39,6 +40,7 @@ def decode_frame(frame: Frame):
 __all__ = [
     "Ack", "CanBusStatus", "ClearTorque", "DecodeError", "DeviceInfo", "DeviceInfoReq", "Estop",
     "Event", "Heartbeat", "JointRecord", "JointState", "MESSAGE_CLASSES", "ParamRead",
-    "ParamValue", "ParamWrite", "REGISTRY", "RawMessage", "SetJointTorque", "SystemStatus",
+    "ParamValue", "ParamWrite", "REGISTRY", "RawMessage", "SetHostTarget", "SetJointTorque",
+    "SystemStatus",
     "TorqueItem", "decode_frame", "decode_payload",
 ]

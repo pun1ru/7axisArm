@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph.graphicsItems.PlotCurveItem import PlotCurveItem as _PlotCurveItem
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, QHBoxLayout, QLabel,
@@ -18,10 +19,20 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, 
 
 from ..model import GROUP_TITLE, GROUPS, QKEYS, QUANTITIES, TIME_HOST, TIME_MCU, BufferView, SampleBuffer
 from . import theme
+from .layout_util import hscrollable
 
 WINDOWS_S = (2, 5, 10, 20, 30, 60)
 DASHED = {"target_deg", "torque_cmd_nm"}
 DEFAULT_ON = {"angle_deg", "velocity_dps", "torque_nm"}
+
+
+# PySide6 6.11 + Python 3.14 can crash natively in pyqtgraph's
+# PlotCurveItem.pixelPadding -> pixelVectors -> Point(QPointF) path.
+# The padding is only a sub-pixel bounding-box margin for a 1 px cosmetic
+# pen, so disabling it keeps rendering unchanged and avoids the crash.
+if not getattr(_PlotCurveItem, "_armhost_safe_pixel_padding", False):
+    _PlotCurveItem.pixelPadding = lambda self: 0.0
+    _PlotCurveItem._armhost_safe_pixel_padding = True
 
 
 def decimate_minmax(x: np.ndarray, ys: np.ndarray, bins: int) -> tuple[np.ndarray, np.ndarray]:
@@ -250,7 +261,9 @@ class ScopeWidget(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addLayout(bar)
+        bar_widget = QWidget()
+        bar_widget.setLayout(bar)
+        lay.addWidget(hscrollable(bar_widget))      # 窗口窄时工具条横向滚动，不撑大窗口
         lay.addWidget(split, 1)
 
         self.timer = QTimer(self)

@@ -14,7 +14,7 @@ from typing import Any
 
 from .model import RobotSample, SampleBuffer
 from .model.backend import RobotBackend
-from .model.recorder import CsvRecorder
+from .model.recorder import CsvRecorder, SnapshotRecorder
 from .protocol import Event, EventCode, Severity
 from .protocol.enums import ArmState
 
@@ -25,6 +25,7 @@ class MonitorController:
     def __init__(self, buffer_capacity: int = 30000, joint_count: int = 7) -> None:
         self.buffer = SampleBuffer(buffer_capacity, joint_count)
         self.recorder = CsvRecorder()
+        self.snapshot = SnapshotRecorder()
         self.backend: RobotBackend | None = None
         self._latest: RobotSample | None = None
         self._lock = threading.Lock()
@@ -55,6 +56,7 @@ class MonitorController:
 
     def shutdown(self) -> None:
         self.recorder.stop()
+        self.snapshot.stop()
         self.set_backend(None)
 
     # ---------------------------------------------------------------- 后端线程回调
@@ -141,3 +143,45 @@ class MonitorController:
             e = f.exception()
             self._push("estop", f"{what}{'失败：' + str(e) if e else '已确认'}")
         fut.add_done_callback(done)
+
+    def read_limits(self):
+        b = self.backend
+        if b is None or not hasattr(b, "read_limits"):
+            return None
+        return b.read_limits()
+
+    def set_host_target(self, joint: int, target_deg: float, closed_loop: bool = False):
+        b = self.backend
+        if b is None or not hasattr(b, "set_host_target"):
+            self._push("warn", "当前数据源不支持 Host 目标")
+            return None
+        fut = b.set_host_target(joint, target_deg, closed_loop)
+
+        def done(f):
+            e = f.exception()
+            self._push("host_target", f"J{joint} 目标已确认" if e is None else f"J{joint} 目标失败：{e}")
+        fut.add_done_callback(done)
+        return fut
+
+    def stop_host_loops(self):
+        b = self.backend
+        if b is None or not hasattr(b, "stop_host_loops"):
+            self._push("warn", "当前数据源不支持 Host 闭环控制")
+            return None
+        fut = b.stop_host_loops()
+
+        def done(f):
+            e = f.exception()
+            self._push("host_target", "全部关节已退出闭环" if e is None else f"退出闭环失败：{e}")
+        fut.add_done_callback(done)
+        return fut
+
+    def capture_snapshot(self, path=None):
+        s = self.latest()
+        if s is None:
+            raise ValueError("还没有收到任何一帧关节数据")
+        if not self.snapshot.active:
+            if path is None:
+                raise ValueError("快照文件尚未创建")
+            self.snapshot.start(path)
+        return self.snapshot.capture(s)
