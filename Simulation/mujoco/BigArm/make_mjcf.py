@@ -213,6 +213,10 @@ def main():
     worldbody = ET.SubElement(root, "worldbody")
     ET.SubElement(worldbody, "light", {"pos": "0 0 1.5", "dir": "0 0 -1",
                                        "diffuse": "0.8 0.8 0.8"})
+    # Classic checkerboard ground plane. The base geometry already sits on z=0,
+    # and the base is the fixed root of the kinematic tree, so it stands on it.
+    ET.SubElement(worldbody, "geom", {"name": "floor", "type": "plane",
+                                      "size": "0 0 0.05", "material": "groundplane"})
 
     site_counter = [1]
     if args.keep_base:
@@ -227,6 +231,13 @@ def main():
     asset = ET.Element("asset")
     for name, filename in book.entries:
         ET.SubElement(asset, "mesh", {"name": name, "file": filename})
+    ET.SubElement(asset, "texture", {
+        "name": "groundplane", "type": "2d", "builtin": "checker",
+        "mark": "edge", "rgb1": "0.2 0.3 0.4", "rgb2": "0.1 0.2 0.3",
+        "markrgb": "0.8 0.8 0.8", "width": "300", "height": "300"})
+    ET.SubElement(asset, "material", {
+        "name": "groundplane", "texture": "groundplane",
+        "texuniform": "true", "texrepeat": "5 5", "reflectance": "0.2"})
     root.insert(2, asset)
 
     contact = ET.Element("contact")
