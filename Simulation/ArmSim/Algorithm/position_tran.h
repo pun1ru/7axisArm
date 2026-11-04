@@ -3,14 +3,8 @@
 
 #include <math.h>
 
-/* 四元数、欧拉角、旋转矩阵相互转换，输入输出都是数组
- * 四元数   q[4]      = [w, x, y, z]，与 Madgwick / ekf_quaternion 一致
- * 欧拉角   euler[3]  = [roll, pitch, yaw]，单位 rad，分别绕 X / Y / Z 轴
- *                      按 Z-Y-X 顺序：R = Rz(yaw) * Ry(pitch) * Rx(roll)
- * 旋转矩阵 R[3][3]   行优先，子坐标系向量变换到父坐标系：v_parent = R * v_child
- *
- * 与 Real/DIYcontroller/LibSE/Algorithm/Math/position_tran.h 完全一致，仅头文件，
- * 仿真与实机共用同一份数学实现。 */
+/* 四元数 q=[w,x,y,z]、欧拉角 euler=[roll,pitch,yaw] rad（R = Rz*Ry*Rx）、
+ * 旋转矩阵 R[3][3]（行优先，v_parent = R * v_child）互转。仅头文件，与实机 LibSE 共用。 */
 
 #define EULER_ROLL   0U
 #define EULER_PITCH  1U
@@ -18,8 +12,7 @@
 
 #define POSITION_TRAN_LOCK_EPS  1e-6f   /* cos(pitch) 低于此值视为万向节死锁 */
 
-/* 3x3 / 3 维向量运算，out 不能与输入别名
- * 旋转矩阵正交，逆即转置，所以只提供带转置的乘法，不做通用求逆 */
+/* 3x3 / 3 维运算，out 不能与输入别名；旋转矩阵的逆即转置，所以只提供带转置的乘法 */
 
 /* out = A * B */
 static inline void Mat3_Mul(const float A[3][3], const float B[3][3], float out[3][3])
@@ -199,8 +192,7 @@ static inline void Vec3_Cross(const float a[3], const float b[3], float out[3])
     out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-/* 4x4 齐次变换 T = [R p; 0 1]，行优先，子坐标系 -> 父坐标系
- * 最后一行恒为 [0 0 0 1]，乘法与求逆只算 3x4 的上半部分，最后一行直接赋常数
+/* 4x4 齐次变换 T = [R p; 0 1]，最后一行恒为 [0 0 0 1]，乘法与求逆只算上面 3x4。
  * out 不能与输入别名 */
 #define TRANS4_POS_COL  3U
 

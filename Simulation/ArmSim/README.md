@@ -71,11 +71,10 @@ cmake -S . -B build -DMUJOCO_ROOT=/opt/mujoco
 cmake --build build -j
 ./build/armsim                 # 8 s，按实时节拍
 ./build/armsim --fast          # 不限速，尽快跑完
-./build/armsim 4.0             # 跑 4 s（第二位置参数是秒数）
-./build/armsim --xml ../mujoco/BigArm/robot.xml 5.0
+./build/armsim ../mujoco/DIY/robot.xml 4.0   # 参数依次是模型、秒数
 ```
 
-默认模型是 `../mujoco/DIY/robot.xml`（CMake 会注入绝对路径）。
+默认模型是 `../mujoco/DIY/robot.xml`（CMake 会注入绝对路径）。模型需要 `joint1..jointN` 和 `tcp` site。
 
 默认时间线：
 
@@ -88,6 +87,48 @@ cmake --build build -j
 
 > ENABLE 只是过渡。这个状态每个周期把目标设成当前观测（PID 误差恒为 0），
 > 全靠重力前馈顶着；仿真里减速器摩擦有限，停久了会慢慢漂，所以 0.5 s 就切 HOST。
+
+## 和上位机（Host/armhost）对接
+
+```
+Host/armhost (pyserial) ──► /tmp/armsim-host ──► pty ──► Driver/host_link ──► Module/host ──► Arm_t
+```
+
+实机上位机走 UART10（921600），仿真里 Driver 层用一对伪终端 pty 代替，**协议、帧格式、
+参数号与实机完全相同**，`Host/armhost` 不用改，把串口名换成 `/tmp/armsim-host` 即可。
+
+```bash
+./build/armsim --host              # 开链路，等上位机；Ctrl-C 退出
+```
+
+```python
+from armhost.comm import ArmLink, SerialConfig, SerialTransport
+link = ArmLink(SerialTransport(SerialConfig(port="/tmp/armsim-host", baudrate=921600)))
+link.start()
+link.set_host_target(1, 20.0, closed_loop=True).result(1.0)   # J1 转到 20 deg
+```
+
+`--host` 下臂直接进入 HOST 状态，没有脚本演示，也不刷终端；所有关节一开始都不闭环，
+只有重力前馈托着，等上位机发 `SET_HOST_TARGET`。仿真强制按实时节拍跑，`--fast` 无效。
+
+| 方向 | 消息 | 说明 |
+| --- | --- | --- |
+| 上行 | `JOINT_STATE` | 100 Hz，7 关节的角度、速度、力矩、目标、指令力矩、编码器、状态标志 |
+| 上行 | `ACK` / `PARAM_VALUE` / `DEVICE_INFO` | 命令应答；同一 (type, seq) 重发时重放上次应答 |
+| 下行 | `HEARTBEAT` | 只刷新链路存活时间 |
+| 下行 | `DEVICE_INFO_REQ` | 设备信息，`fw_name` 为 `ArmSim` |
+| 下行 | `PARAM_READ` | 状态频率、限位、PID 增益、DH、方向、零点（只读） |
+| 下行 | `SET_HOST_TARGET` | 单关节目标 + 是否闭环，或全部退出闭环 |
+
+未实现的消息（力矩直控、急停、参数写等）回 `UNSUPPORTED`。
+上位机掉线超过 300 ms，`Host_Run` 会让所有关节退出闭环，行为与实机一致。
+
+与实机的差别：
+
+- 链路超时按**墙钟**算，`JOINT_STATE` 里的时间戳是**仿真时间**。
+- 应答直接写链路，不经发送队列。
+- 零点参数是 16 bit 编码器计数，由仿真的 rad 零点折算（仿真里恒为 0）。
+- pty 只支持 Linux / macOS，Windows 下 `--host` 会报错退出。
 
 ## 接自己的算法
 

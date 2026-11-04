@@ -19,7 +19,9 @@ add_executable(armsim
     Algorithm/dh.cpp
     Algorithm/gravity.cpp
     Driver/motor.cpp
+    Driver/host_link.cpp
     Module/arm.cpp
+    Module/host.cpp
     System/sim_plant.cpp
     System/system.cpp
 )

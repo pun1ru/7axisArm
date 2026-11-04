@@ -6,9 +6,9 @@
 #include <stdio.h>
 #include <string.h>
 
-static char s_last_error[1024];
+static char s_last_error[2048];
 
-/* ---- MuJoCo 日志回调：把引擎 warning 记到 stderr，避免跑飞时只剩一行 "warning" ---- */
+/* MuJoCo 日志回调：把引擎 warning 打到 stderr */
 static void SimPlant_LogWarning(const char *msg)
 {
     fprintf(stderr, "[mujoco] %s\n", msg);
@@ -17,6 +17,11 @@ static void SimPlant_LogWarning(const char *msg)
 const char *SimPlant_LastError(void)
 {
     return s_last_error;
+}
+
+static bool SimPlant_JointValid(const SimPlant_t *plant, uint8_t joint)
+{
+    return plant != NULL && plant->data != NULL && joint < plant->joint_count;
 }
 
 bool SimPlant_Init(SimPlant_t *plant, const SimPlantConfig_t *config)
@@ -40,28 +45,20 @@ bool SimPlant_Init(SimPlant_t *plant, const SimPlantConfig_t *config)
         return false;
     }
 
-    /* 关节 armature / damping 是电机侧的模型，不在 URDF 里。
-     * 远端关节惯量很小（J6 约 1.5e-5 kg*m^2），不加这两项时力矩控制会抖，
-     * 加上后与实机“转子惯量 + 粘性阻尼”的手感接近。数值在 App/system_define.h 里调。 */
-    if (config->joint_armature > 0.0)
+    /* armature / damping / frictionloss 是电机侧的模型，不在 URDF 里。
+     * 远端关节惯量很小（J6 约 1.5e-5 kg*m^2），不加时力矩控制会抖、会慢漂。
+     * 数值在 system_define.h 里调。 */
+    for (int i = 0; i < plant->model->nv; ++i)
     {
-        for (int i = 0; i < plant->model->nv; ++i)
+        if (config->joint_armature > 0.0)
         {
             plant->model->dof_armature[i] = config->joint_armature;
         }
-    }
-    if (config->joint_damping > 0.0)
-    {
-        for (int i = 0; i < plant->model->nv; ++i)
+        if (config->joint_damping > 0.0)
         {
             plant->model->dof_damping[i] = config->joint_damping;
         }
-    }
-    /* 库仑摩擦：实机减速器静摩擦能“锁住”关节，纯 viscous damping 只会减慢漂移。
-     * 远端关节 kp 很小，靠它才能停在重力前馈的残差上。 */
-    if (config->joint_frictionloss > 0.0)
-    {
-        for (int i = 0; i < plant->model->nv; ++i)
+        if (config->joint_frictionloss > 0.0)
         {
             plant->model->dof_frictionloss[i] = config->joint_frictionloss;
         }
@@ -71,17 +68,15 @@ bool SimPlant_Init(SimPlant_t *plant, const SimPlantConfig_t *config)
     if (plant->data == NULL)
     {
         snprintf(s_last_error, sizeof(s_last_error), "mj_makeData failed");
-        mj_deleteModel(plant->model);
-        plant->model = NULL;
+        SimPlant_Clear(plant);
         return false;
     }
 
-    /* 约定关节名 joint1..jointN；找不到就认为链结束 */
+    /* 约定关节名 joint1..jointN，找不到就认为链结束 */
     for (int i = 0; i < SIM_PLANT_MAX_JOINTS; ++i)
     {
         char name[32];
         int jid;
-        int dof;
 
         snprintf(name, sizeof(name), "joint%d", i + 1);
         jid = mj_name2id(plant->model, mjOBJ_JOINT, name);
@@ -89,9 +84,8 @@ bool SimPlant_Init(SimPlant_t *plant, const SimPlantConfig_t *config)
         {
             break;
         }
-        dof = plant->model->jnt_dofadr[jid];
         plant->qpos_adr[i] = plant->model->jnt_qposadr[jid];
-        plant->dof_adr[i] = dof;
+        plant->dof_adr[i] = plant->model->jnt_dofadr[jid];
         plant->joint_count = i + 1;
     }
     if (plant->joint_count == 0)
@@ -114,27 +108,20 @@ void SimPlant_Clear(SimPlant_t *plant)
     {
         return;
     }
-    if (plant->data != NULL)
-    {
-        mj_deleteData(plant->data);
-        plant->data = NULL;
-    }
-    if (plant->model != NULL)
-    {
-        mj_deleteModel(plant->model);
-        plant->model = NULL;
-    }
+    mj_deleteData(plant->data);
+    mj_deleteModel(plant->model);
+    plant->data = NULL;
+    plant->model = NULL;
     plant->joint_count = 0;
 }
 
 void SimPlant_Reset(SimPlant_t *plant)
 {
-    if (plant == NULL || plant->model == NULL || plant->data == NULL)
+    if (plant == NULL || plant->data == NULL)
     {
         return;
     }
     mj_resetData(plant->model, plant->data);
-    memset(plant->command_torque, 0, sizeof(plant->command_torque));
     plant->warning_count = 0;
     plant->step_count = 0;
     mj_forward(plant->model, plant->data);
@@ -142,40 +129,29 @@ void SimPlant_Reset(SimPlant_t *plant)
 
 void SimPlant_ClearTorque(SimPlant_t *plant)
 {
-    if (plant == NULL || plant->data == NULL)
+    if (plant != NULL && plant->data != NULL)
     {
-        return;
+        mju_zero(plant->data->qfrc_applied, plant->model->nv);
     }
-    memset(plant->command_torque, 0, sizeof(plant->command_torque));
-    memset(plant->data->qfrc_applied, 0,
-           sizeof(mjtNum) * (size_t)plant->model->nv);
 }
 
 void SimPlant_SetJointTorque(SimPlant_t *plant, uint8_t joint, double torque_nm)
 {
-    if (plant == NULL || plant->data == NULL || joint >= plant->joint_count)
+    if (!SimPlant_JointValid(plant, joint))
     {
         return;
     }
-    if (!(torque_nm == torque_nm))   /* NaN */
+    if (isnan(torque_nm))
     {
         torque_nm = 0.0;
     }
-    if (torque_nm > plant->torque_limit_nm)
-    {
-        torque_nm = plant->torque_limit_nm;
-    }
-    else if (torque_nm < -plant->torque_limit_nm)
-    {
-        torque_nm = -plant->torque_limit_nm;
-    }
-    plant->command_torque[joint] = torque_nm;
+    torque_nm = fmax(-plant->torque_limit_nm, fmin(plant->torque_limit_nm, torque_nm));
     plant->data->qfrc_applied[plant->dof_adr[joint]] = torque_nm;
 }
 
 void SimPlant_Step(SimPlant_t *plant)
 {
-    if (plant == NULL || plant->model == NULL || plant->data == NULL)
+    if (plant == NULL || plant->data == NULL)
     {
         return;
     }
@@ -187,29 +163,12 @@ void SimPlant_Step(SimPlant_t *plant)
 
 double SimPlant_GetJointAngleRad(const SimPlant_t *plant, uint8_t joint)
 {
-    if (plant == NULL || plant->data == NULL || joint >= plant->joint_count)
-    {
-        return 0.0;
-    }
-    return plant->data->qpos[plant->qpos_adr[joint]];
+    return SimPlant_JointValid(plant, joint) ? plant->data->qpos[plant->qpos_adr[joint]] : 0.0;
 }
 
 double SimPlant_GetJointVelocityRad(const SimPlant_t *plant, uint8_t joint)
 {
-    if (plant == NULL || plant->data == NULL || joint >= plant->joint_count)
-    {
-        return 0.0;
-    }
-    return plant->data->qvel[plant->dof_adr[joint]];
-}
-
-double SimPlant_GetAppliedTorque(const SimPlant_t *plant, uint8_t joint)
-{
-    if (plant == NULL || joint >= plant->joint_count)
-    {
-        return 0.0;
-    }
-    return plant->command_torque[joint];
+    return SimPlant_JointValid(plant, joint) ? plant->data->qvel[plant->dof_adr[joint]] : 0.0;
 }
 
 double SimPlant_GetTime(const SimPlant_t *plant)

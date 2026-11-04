@@ -7,34 +7,11 @@
 
 /// @brief pid 计算结构体（与 Real/DIYcontroller 的实现保持一致）
 typedef struct {
-	/**
-	* \brief pid parameters
-	*/
 	float kp, ki, kd;
-
-	/**
-	* \brief errors
-	*/
 	float cur_error, last_error, last_last_error, sum_error;
-
-	/**
-	* \brief pid output
-	*/
 	float output;
-
-	/**
-	* \brief filtered derivative term (D low-pass)
-	*/
-	float deriv_filtered;
-
-	/**
-	* \brief D term low-pass coefficient [0, 1), 0 = no filtering, larger = heavier filtering
-	*/
-	float d_alpha;
-
-	/**
-	* \brief Constrain parameters
-	*/
+	float deriv_filtered;   // D 项低通后的值
+	float d_alpha;          // D 项低通系数 [0, 1)，0 = 不滤波
 	float sum_error_max, output_max;
 } PIDStruct;
 

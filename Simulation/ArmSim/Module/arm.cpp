@@ -16,21 +16,10 @@ static_assert(ARM_GRAVITY_DOF == ARM_JOINT_COUNT, "gravity.h 的关节数必须�
                                  ARM_STATE_BIT(ARM_AUTO) | ARM_STATE_BIT(ARM_SERVANT) | \
                                  ARM_STATE_BIT(ARM_HOST))
 
-static void Arm_SendZeroCommand(Arm_t *arm);
-static void Arm_SendJointCommand(Arm_t *arm);
-
 /*--------------------------------------工具--------------------------------------*/
-static float DoubleEdgeLimiter(float value, float min_limit, float max_limit)
+static float Clamp(float value, float min_limit, float max_limit)
 {
-    if (value > max_limit)
-    {
-        return max_limit;
-    }
-    if (value < min_limit)
-    {
-        return min_limit;
-    }
-    return value;
+    return value > max_limit ? max_limit : (value < min_limit ? min_limit : value);
 }
 
 static bool Arm_StateAllowed(const Arm_t *arm, ArmState_t state)
@@ -41,34 +30,38 @@ static bool Arm_StateAllowed(const Arm_t *arm, ArmState_t state)
     return (mask & ARM_STATE_BIT(state)) != 0U;
 }
 
-/*--------------------------------------观测--------------------------------------*/
-/* 电机反馈 -> 关节角，方向按 direction 折算（+1 正向转编码器增大） */
-static void Arm_UpdateJointAngle(Arm_t *arm)
+/* 对所有电机调用同一个 ops（enable / disable） */
+static void Arm_MotorsCall(Arm_t *arm, void (*MotorOps_t::*op)(Motor_t *))
 {
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         Motor_t *motor = arm->config.motor.joint[i];
-        const int8_t sign = arm->config.param.direction[i];
-        const float direction = sign < 0 ? -1.0f : 1.0f;
 
-        Motor_UpdateFeedbackStatus(motor);
-        arm->observer.joint_abs_deg[i] = direction * motor->feedback.abs_angle_deg;
-        arm->observer.joint_deg[i] = direction * motor->feedback.multi_angle_deg;
+        if ((motor->motorops.*op) != NULL)
+        {
+            (motor->motorops.*op)(motor);
+        }
     }
 }
 
-static void Arm_UpdateForwardKinematics(Arm_t *arm)
-{
-    DH_ForwardKinematics(arm->config.param.dh, arm->observer.joint_deg, ARM_JOINT_COUNT,
-                         arm->observer.end_to_base);
-}
-
-static void Arm_ExtractPose(Arm_t *arm)
+/*--------------------------------------观测--------------------------------------*/
+/* 电机反馈 -> 关节角（按 direction 折算）-> 正运动学 -> 末端位置和欧拉角 */
+static void Arm_Observe(Arm_t *arm)
 {
     ArmObserver_t *obs = &arm->observer;
     float rotation[3][3];
     float euler_rad[ARM_VECTOR_DIM];
 
+    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+    {
+        const Feedback_t *fb = &arm->config.motor.joint[i]->feedback;
+        const float direction = arm->config.param.direction[i] < 0 ? -1.0f : 1.0f;
+
+        obs->joint_abs_deg[i] = direction * fb->abs_angle_deg;
+        obs->joint_deg[i] = direction * fb->multi_angle_deg;
+    }
+
+    DH_ForwardKinematics(arm->config.param.dh, obs->joint_deg, ARM_JOINT_COUNT, obs->end_to_base);
     Trans4_GetPos(obs->end_to_base, obs->position_m);
     Trans4_GetRotation(obs->end_to_base, rotation);
     Matrix_ToEuler(rotation, euler_rad);
@@ -78,257 +71,137 @@ static void Arm_ExtractPose(Arm_t *arm)
     }
 }
 
-/*--------------------------------------重力补偿--------------------------------------*/
-static void Arm_GravityClear(Arm_t *arm)
-{
-    memset(arm->gravity.torque_cmd, 0, sizeof(arm->gravity.torque_cmd));
-    arm->gravity.output_active = 0U;
-}
-
+/* 重力矩依赖本周期关节角，放在观测之后、控制之前。
+ * 符号只在这里乘一次；不做单轴预限幅，PID + 前馈相加后统一做总限幅 */
 static void Arm_GravityUpdate(Arm_t *arm)
 {
+    const ArmGravityParam_t *param = &arm->config.param.gravity;
     ArmGravityState_t *gravity = &arm->gravity;
 
-    gravity->model_valid = ArmDynamics_GravityModel(&arm->config.param.gravity, arm->config.param.dh,
-                                                    arm->observer.joint_deg, gravity->torque_model) ? 1U : 0U;
-    gravity->output_active = 0U;
-    /* 符号只在这里乘一次；不做单轴预限幅，PID + 前馈相加后统一做总限幅 */
-    ArmDynamics_GravityCommand(gravity->torque_model, gravity->model_valid != 0U,
-                               arm->config.param.gravity.sign, NULL,
-                               arm->config.param.gravity.joint_mask, gravity->torque_cmd);
+    gravity->model_valid = ArmDynamics_GravityModel(param, arm->config.param.dh,
+                                                    arm->observer.joint_deg, gravity->torque_model);
+    ArmDynamics_GravityCommand(gravity->torque_model, gravity->model_valid != 0U, param->sign,
+                               NULL, param->joint_mask, gravity->torque_cmd);
 }
 
 /*--------------------------------------目标--------------------------------------*/
-static void Arm_UpdateMultiTurnLimit(const Arm_t *arm, uint8_t joint, ArmJointCtrl_t *ctrl)
-{
-    const ArmJointLimit_t *limit = &arm->config.param.limit[joint];
-    const float current_abs_deg = arm->observer.joint_abs_deg[joint];
-    const float current_multi_deg = arm->observer.joint_deg[joint];
-
-    /* 限位映射到当前圈，差值不做环绕 */
-    ctrl->limit_min_deg = current_multi_deg + (limit->min_deg - current_abs_deg);
-    ctrl->limit_max_deg = current_multi_deg + (limit->max_deg - current_abs_deg);
-}
-
-static void Arm_AlignJointTarget(Arm_t *arm)
+/* 限位映射到当前圈（差值不做环绕），目标对齐当前角，PID 清零 */
+static void Arm_AlignTarget(Arm_t *arm)
 {
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
+        const ArmJointLimit_t *limit = &arm->config.param.limit[i];
+        const float multi_deg = arm->observer.joint_deg[i];
+        const float abs_deg = arm->observer.joint_abs_deg[i];
 
-        Arm_UpdateMultiTurnLimit(arm, i, ctrl);
-        ctrl->target_deg = DoubleEdgeLimiter(arm->observer.joint_deg[i],
-                                             ctrl->limit_min_deg, ctrl->limit_max_deg);
+        ctrl->limit_min_deg = multi_deg + (limit->min_deg - abs_deg);
+        ctrl->limit_max_deg = multi_deg + (limit->max_deg - abs_deg);
+        ctrl->target_deg = Clamp(multi_deg, ctrl->limit_min_deg, ctrl->limit_max_deg);
         ctrl->output = 0.0f;
         PIDReset(&ctrl->pid);
     }
+    arm->ctrl_align_pending = 0U;
 }
 
-static void Arm_AlignHostTarget(Arm_t *arm)
+/* HOST 的对齐：在 AlignTarget 之上再清掉上位机的目标和闭环掩码 */
+static void Arm_AlignHost(Arm_t *arm)
 {
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
-
-        Arm_UpdateMultiTurnLimit(arm, i, ctrl);
-        ctrl->target_deg = DoubleEdgeLimiter(arm->observer.joint_deg[i],
-                                             ctrl->limit_min_deg, ctrl->limit_max_deg);
-        ctrl->output = 0.0f;
-        PIDReset(&ctrl->pid);
-        arm->host_target_abs_deg[i] = arm->observer.joint_abs_deg[i];
-    }
+    Arm_AlignTarget(arm);
+    memcpy(arm->host_target_abs_deg, arm->observer.joint_abs_deg, sizeof(arm->host_target_abs_deg));
     arm->host_closed_loop_mask = 0U;
     arm->host_target_valid_mask = 0U;
-}
-
-static void Arm_TrackJointTarget(Arm_t *arm)
-{
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        arm->joint_ctrl[i].target_deg = arm->observer.joint_deg[i];
-    }
+    arm->host_align_pending = 0U;
 }
 
 static void Arm_UpdateTarget(Arm_t *arm)
 {
-    switch (arm->state)
+    if (arm->state == ARM_HOST && arm->host_align_pending != 0U)
     {
-    case ARM_ENABLE:
-        if (arm->ctrl_align_pending != 0U)
-        {
-            Arm_AlignJointTarget(arm);
-            arm->ctrl_align_pending = 0U;
-        }
-        for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-        {
-            ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
+        Arm_AlignHost(arm);
+    }
+    else if (arm->state == ARM_ENABLE && arm->ctrl_align_pending != 0U)
+    {
+        Arm_AlignTarget(arm);
+    }
 
-            ctrl->target_deg = DoubleEdgeLimiter(arm->observer.joint_deg[i],
-                                                 ctrl->limit_min_deg, ctrl->limit_max_deg);
-        }
-        break;
+    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
+    {
+        ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
 
-    case ARM_HOST:
-        if (arm->host_align_pending != 0U)
+        switch (arm->state)
         {
-            Arm_AlignHostTarget(arm);
-            arm->host_align_pending = 0U;
-            arm->ctrl_align_pending = 0U;
+        case ARM_ENABLE:   /* 目标每周期跟随观测，靠重力前馈托住 */
+            ctrl->target_deg = Clamp(arm->observer.joint_deg[i], ctrl->limit_min_deg, ctrl->limit_max_deg);
+            break;
+        case ARM_HOST:     /* 目标由 Arm_SetHostTarget 写入，这里只做限位 */
+            ctrl->target_deg = Clamp(ctrl->target_deg, ctrl->limit_min_deg, ctrl->limit_max_deg);
+            break;
+        default:
+            ctrl->target_deg = arm->observer.joint_deg[i];
+            break;
         }
-        for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-        {
-            ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
-
-            ctrl->target_deg = DoubleEdgeLimiter(ctrl->target_deg,
-                                                 ctrl->limit_min_deg, ctrl->limit_max_deg);
-        }
-        break;
-
-    default:
-        Arm_TrackJointTarget(arm);
-        break;
     }
 }
 
-/*--------------------------------------控制--------------------------------------*/
-/* 总力矩限幅：PID 与重力前馈各自限幅后相加，最终和再统一截到这里 */
-static float Arm_LimitTotalTorque(const Arm_t *arm, uint8_t joint, float torque)
+/*--------------------------------------控制与通信--------------------------------------*/
+/* 把各关节力矩写进 motorcmd 并发送；active=false 时发零指令（保留控制模式） */
+static void Arm_SendTorque(Arm_t *arm, bool active)
 {
-    const float limit = arm->config.param.gain[joint].total_output_max;
-
-    if (!(limit > 0.0f) || !((torque - torque) == 0.0f))
+    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
-        return 0.0f;
+        Motor_t *motor = arm->config.motor.joint[i];
+        MotorCmd_t *cmd = &motor->motorcmd;
+        const ControlMode_t mode = cmd->control_mode;
+
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->control_mode = mode;
+        if (active && mode == MODE_CURRENT)
+        {
+            cmd->current = arm->joint_ctrl[i].output;
+        }
+        else if (active)
+        {
+            cmd->torque = arm->joint_ctrl[i].output;
+        }
+        motor->motorops.sendcommand(motor);
     }
-    return torque > limit ? limit : (torque < -limit ? -limit : torque);
 }
 
-static float Arm_AddGravity(Arm_t *arm, uint8_t joint, float pid_output)
-{
-    if (arm->config.param.gravity.enable == 0U || arm->gravity.model_valid == 0U)
-    {
-        return pid_output;
-    }
-    arm->gravity.output_active = 1U;
-    return pid_output + arm->gravity.torque_cmd[joint];
-}
-
+/* PID（ENABLE 全关节，HOST 只对闭环掩码里的关节）+ 重力前馈，再统一做总力矩限幅 */
 static void Arm_JointControl(Arm_t *arm)
 {
     if (arm->state != ARM_ENABLE && arm->state != ARM_HOST)
     {
-        Arm_SendZeroCommand(arm);
+        Arm_SendTorque(arm, false);
         return;
     }
 
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         ArmJointCtrl_t *ctrl = &arm->joint_ctrl[i];
-        const float observed_deg = arm->observer.joint_deg[i];
-        const bool closed_loop =
-            (arm->state == ARM_ENABLE) ||
-            ((arm->host_closed_loop_mask & (uint8_t)(1U << i)) != 0U);
+        const float limit = arm->config.param.gain[i].total_output_max;
+        const bool closed_loop = arm->state == ARM_ENABLE ||
+                                 (arm->host_closed_loop_mask & (1U << i)) != 0U;
+        float torque = 0.0f;
 
         if (closed_loop)
         {
             /* 误差直接相减，不做最短路径折叠，理由同实机 arm_jointctrl.c */
-            ctrl->output = PIDUpdate(&ctrl->pid, ctrl->target_deg - observed_deg);
+            torque = PIDUpdate(&ctrl->pid, ctrl->target_deg - arm->observer.joint_deg[i]);
         }
         else
         {
-            ctrl->output = 0.0f;
             PIDReset(&ctrl->pid);
         }
-        ctrl->output = Arm_AddGravity(arm, i, ctrl->output);
-        ctrl->output = Arm_LimitTotalTorque(arm, i, ctrl->output);
-    }
-    Arm_SendJointCommand(arm);
-}
-
-/*--------------------------------------通信--------------------------------------*/
-static void Arm_WriteJointCommand(Motor_t *motor, float torque_nm)
-{
-    if (motor == NULL)
-    {
-        return;
-    }
-
-    MotorCmd_t *cmd = &motor->motorcmd;
-    switch (cmd->control_mode)
-    {
-    case MODE_MIT:
-        cmd->position = 0.0f;
-        cmd->velocity = 0.0f;
-        cmd->kp = 0.0f;
-        cmd->kd = 0.0f;
-        cmd->torque = torque_nm;
-        break;
-    case MODE_TORQUE:
-        cmd->torque = torque_nm;
-        break;
-    case MODE_CURRENT:
-        cmd->current = torque_nm;
-        break;
-    default:
-        break;
-    }
-}
-
-static void Arm_SendZeroCommand(Arm_t *arm)
-{
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        Motor_t *motor = arm->config.motor.joint[i];
-        const ControlMode_t mode = motor->motorcmd.control_mode;
-
-        memset(&motor->motorcmd, 0, sizeof(motor->motorcmd));
-        motor->motorcmd.control_mode = mode;
-        motor->motorops.sendcommand(motor);
-    }
-}
-
-static void Arm_SendJointCommand(Arm_t *arm)
-{
-    /* 先写完所有关节再统一发送 */
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        Arm_WriteJointCommand(arm->config.motor.joint[i], arm->joint_ctrl[i].output);
-    }
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        Motor_t *motor = arm->config.motor.joint[i];
-
-        if (motor != NULL)
+        if (arm->config.param.gravity.enable != 0U && arm->gravity.model_valid != 0U)
         {
-            motor->motorops.sendcommand(motor);
+            torque += arm->gravity.torque_cmd[i];
         }
+        /* limit<=0 或结果非有限时输出 0 */
+        ctrl->output = (limit > 0.0f && (torque - torque) == 0.0f) ? Clamp(torque, -limit, limit) : 0.0f;
     }
-}
-
-static void Arm_SendEnableCommand(Arm_t *arm)
-{
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        Motor_t *motor = arm->config.motor.joint[i];
-
-        if (motor != NULL && motor->motorops.enable != NULL)
-        {
-            motor->motorops.enable(motor);
-        }
-    }
-}
-
-static void Arm_SendDisableCommand(Arm_t *arm)
-{
-    for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
-    {
-        Motor_t *motor = arm->config.motor.joint[i];
-
-        if (motor != NULL && motor->motorops.disable != NULL)
-        {
-            motor->motorops.disable(motor);
-        }
-    }
+    Arm_SendTorque(arm, true);
 }
 
 /*--------------------------------------对外接口--------------------------------------*/
@@ -342,11 +215,10 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
 
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
-        Motor_t *motor = config->motor.joint[i];
         const ArmJointGain_t *gain = &config->param.gain[i];
 
         /* 零点以模块参数为准，覆盖电机初始化时的默认值 */
-        motor->zero_point_rad = config->param.zero_point_rad[i];
+        config->motor.joint[i]->zero_point_rad = config->param.zero_point_rad[i];
         PIDInitialize(&arm->joint_ctrl[i].pid, gain->kp, gain->ki, gain->kd,
                       gain->d_alpha, gain->sum_error_max, gain->output_max);
     }
@@ -354,19 +226,15 @@ void Arm_Init(Arm_t *arm, const ArmConfig_t *config)
 
 void Arm_Run(Arm_t *arm)
 {
-    /* 观测 */
-    Arm_UpdateJointAngle(arm);
-    Arm_UpdateForwardKinematics(arm);
-    Arm_ExtractPose(arm);
-    /* 重力矩依赖本周期关节角，放在观测之后、控制之前 */
+    Arm_Observe(arm);
     Arm_GravityUpdate(arm);
 
-    /* 控制与通信 */
+    /* 使能帧周期性重发，防止电机掉使能 */
     if (arm->state == ARM_ENABLE || arm->state == ARM_HOST)
     {
         if (arm->enable_divider == 0U)
         {
-            Arm_SendEnableCommand(arm);
+            Arm_MotorsCall(arm, &MotorOps_t::enable);
             arm->enable_divider = ARM_ENABLE_RESEND_DIV;
         }
         --arm->enable_divider;
@@ -378,36 +246,26 @@ void Arm_Run(Arm_t *arm)
 
 bool Arm_SetState(Arm_t *arm, ArmState_t state)
 {
-    const ArmState_t previous_state = arm->state;
-
     if (!Arm_StateAllowed(arm, state))
     {
         return false;
     }
-
-    if (state != arm->state)
+    if (state == arm->state)
     {
-        arm->state = state;
-        arm->enable_divider = 0U;
-        arm->ctrl_align_pending = 1U;
-        arm->host_align_pending = state == ARM_HOST ? 1U : 0U;
-        arm->host_closed_loop_mask = 0U;
-        arm->host_target_valid_mask = 0U;
-
-        if (previous_state != ARM_PROTECTED && state == ARM_PROTECTED)
-        {
-            Arm_SendDisableCommand(arm);
-        }
+        return true;
     }
+
+    if (state == ARM_PROTECTED)
+    {
+        Arm_MotorsCall(arm, &MotorOps_t::disable);
+    }
+    arm->state = state;
+    arm->enable_divider = 0U;
+    arm->ctrl_align_pending = 1U;
+    arm->host_align_pending = state == ARM_HOST ? 1U : 0U;
+    arm->host_closed_loop_mask = 0U;
+    arm->host_target_valid_mask = 0U;
     return true;
-}
-
-void Arm_SetRcOnline(Arm_t *arm, bool online)
-{
-    if (arm != NULL)
-    {
-        arm->rc_online = online ? 1U : 0U;
-    }
 }
 
 ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_abs_deg,
@@ -421,11 +279,11 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
     {
         return ARM_HOST_TARGET_BAD_TARGET;
     }
+    bit = (uint8_t)(1U << joint);
     if (arm->state != ARM_HOST)
     {
         return ARM_HOST_TARGET_WRONG_STATE;
     }
-
     limit = &arm->config.param.limit[joint];
     if (!(target_abs_deg >= limit->min_deg && target_abs_deg <= limit->max_deg))
     {
@@ -435,12 +293,9 @@ ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_
     /* 第一次 HOST 控制前可能先收到目标：先锁存限位，再写目标 */
     if (arm->host_align_pending != 0U)
     {
-        Arm_AlignHostTarget(arm);
-        arm->host_align_pending = 0U;
-        arm->ctrl_align_pending = 0U;
+        Arm_AlignHost(arm);
     }
 
-    bit = (uint8_t)(1U << joint);
     was_closed_loop = (arm->host_closed_loop_mask & bit) != 0U;
     arm->host_target_abs_deg[joint] = target_abs_deg;
     arm->joint_ctrl[joint].target_deg = arm->observer.joint_deg[joint] +
@@ -469,7 +324,7 @@ void Arm_StopHostControl(Arm_t *arm)
     }
 
     arm->host_closed_loop_mask = 0U;
-    Arm_GravityClear(arm);
+    memset(arm->gravity.torque_cmd, 0, sizeof(arm->gravity.torque_cmd));
     for (uint8_t i = 0U; i < ARM_JOINT_COUNT; ++i)
     {
         arm->joint_ctrl[i].output = 0.0f;
@@ -491,7 +346,7 @@ bool Arm_CalibrateZero(Arm_t *arm)
     {
         Motor_t *motor = arm->config.motor.joint[i];
 
-        /* 当前原始角 = multi_angle_rad + zero_point_rad；把零点挪到当前姿态 */
+        /* 当前原始角 = multi_angle_rad + zero_point_rad，把零点挪到当前姿态 */
         motor->zero_point_rad += motor->feedback.multi_angle_rad;
         arm->config.param.zero_point_rad[i] = motor->zero_point_rad;
     }

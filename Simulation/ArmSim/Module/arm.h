@@ -9,15 +9,10 @@
 #include "motor.h"
 #include "pid.h"
 
-/* Module 层：七轴臂对象。
- * 与 Real/DIYcontroller/LibSE/Module/Arm 同样的对象划分：
- *   配置三块：电机 / 状态 / 参数
+/* Module 层：七轴臂对象，对象划分与 Real/DIYcontroller/LibSE/Module/Arm 相同。
+ *   配置三块：电机 / 状态 / 参数，具体数值（DH、限位、增益、重力）由 System 层给出
  *   每周期 Arm_Run：观测 -> 控制 -> 通信
- * 具体数值（DH、限位、增益、重力参数）不写在这里，由 System 层的 system.cpp 给出。
- *
- * 实机里 Arm_Init 还要把 CAN 反馈绑到电机上；仿真没有总线，电机在 Driver 层
- * 已经和 SimPlant 绑定，所以这里只管算法和状态机。
- */
+ * 仿真没有 CAN 总线，电机在 Driver 层已经和 SimPlant 绑定，这里只管算法和状态机。 */
 #define ARM_JOINT_COUNT   7U
 #define ARM_VECTOR_DIM    3U
 
@@ -116,7 +111,6 @@ typedef struct {
     float torque_model[ARM_JOINT_COUNT];
     float torque_cmd[ARM_JOINT_COUNT];
     uint8_t model_valid;
-    uint8_t output_active;
 } ArmGravityState_t;
 
 typedef struct {
@@ -130,7 +124,6 @@ typedef struct {
     uint8_t host_align_pending;
     uint8_t host_closed_loop_mask;
     uint8_t host_target_valid_mask;
-    uint8_t rc_online;
     float host_target_abs_deg[ARM_JOINT_COUNT];
 } Arm_t;
 
@@ -139,7 +132,6 @@ void Arm_Run(Arm_t *arm);
 
 /* 状态由上层（遥控输入 / 上位机）修改，目标状态不属于本机角色时拒绝 */
 bool Arm_SetState(Arm_t *arm, ArmState_t state);
-void Arm_SetRcOnline(Arm_t *arm, bool online);
 
 /* HOST 单关节目标：target_abs_deg 为单圈绝对角，必须落在该关节限位内 */
 ArmHostTargetResult_t Arm_SetHostTarget(Arm_t *arm, uint8_t joint, float target_abs_deg,

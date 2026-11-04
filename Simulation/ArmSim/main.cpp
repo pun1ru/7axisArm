@@ -1,3 +1,4 @@
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -6,11 +7,9 @@
 #include "system.h"
 #include "system_define.h"
 
-static void PrintUsage(const char *program)
+static void OnSignal(int)
 {
-    printf("用法: %s [模型.xml] [秒数] [--fast]\n", program);
-    printf("  --xml <path>  指定 MJCF，默认 %s\n", ARMSIM_DEFAULT_XML);
-    printf("  --fast        不按实时节拍 sleep，尽快跑完\n");
+    System_Stop();
 }
 
 int main(int argc, char **argv)
@@ -18,8 +17,9 @@ int main(int argc, char **argv)
     const char *xml_path = ARMSIM_DEFAULT_XML;
     double seconds = SIM_DEFAULT_DURATION_S;
     bool realtime = true;
-    const char *positional[2] = {nullptr, nullptr};
-    int positional_count = 0;
+    bool host_mode = false;
+    bool seconds_given = false;
+    int positional = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -27,41 +27,43 @@ int main(int argc, char **argv)
         {
             realtime = false;
         }
-        else if (strcmp(argv[i], "--xml") == 0 && i + 1 < argc)
+        else if (strcmp(argv[i], "--host") == 0)
         {
-            xml_path = argv[++i];
+            host_mode = true;
         }
-        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0 || positional >= 2)
         {
-            PrintUsage(argv[0]);
-            return 0;
+            printf("用法: %s [模型.xml] [秒数] [--fast] [--host]\n"
+                   "  默认模型 %s\n"
+                   "  --fast  不按实时节拍 sleep\n"
+                   "  --host  开伪串口 %s 等 Host/armhost 连接，由上位机给目标，Ctrl-C 退出\n",
+                   argv[0], ARMSIM_DEFAULT_XML, HOST_LINK_PATH);
+            return positional >= 2 ? 1 : 0;
         }
-        else if (positional_count < 2)
+        else if (positional++ == 0)
         {
-            positional[positional_count++] = argv[i];
+            xml_path = argv[i];
         }
         else
         {
-            PrintUsage(argv[0]);
-            return 1;
+            seconds = atof(argv[i]);
+            seconds_given = true;
         }
     }
-
-    if (positional_count > 0)
+    if (host_mode && !seconds_given)
     {
-        xml_path = positional[0];
-    }
-    if (positional_count > 1)
-    {
-        seconds = atof(positional[1]);
+        seconds = 1.0e9;   /* 交互用，没指定时长就一直跑 */
     }
 
-    if (!System_Init(xml_path))
+    std::signal(SIGINT, OnSignal);
+    std::signal(SIGTERM, OnSignal);
+
+    if (!System_Init(xml_path, host_mode))
     {
         fprintf(stderr, "初始化失败: %s\n", SimPlant_LastError());
+        System_Deinit();
         return 1;
     }
-
     System_Run(seconds, realtime);
     System_Deinit();
     return 0;

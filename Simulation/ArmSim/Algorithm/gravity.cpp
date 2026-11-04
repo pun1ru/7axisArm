@@ -5,19 +5,12 @@
 
 #include "position_tran.h"
 
-/* 算法：关节 j 的重力矩 tau_j = g * sum_{i>=j} sz^T * T_{j-1} * dA_j * A_{j+1}...A_i * pi_i
- * 只用到结果矩阵的第 3 行（sz 选 z），而 M * A_k 的第 3 行只取决于 M 的第 3 行：
- *     row2(M * A) = row2(M) * A
- * 所以不必维护完整 4x4，只递推一个 1x4 行向量 v：
- *     v0 = row2(T_{j-1}) * dA_j
- *     v  = v * A_{i}  (i = j+1 ... 6)
- *     tau_j += g * (v . pi_i)
- *
- * dA_j 直接由 A_j 得到：A 的前两列是 [c; s*ca; s*sa] 与 [-s; c*ca; c*sa]，
- * 对 q 求导就是把它们互换并取负，后两列与 q 无关，导数为 0。
- */
+/* tau_j = g * sum_{i>=j} sz^T * T_{j-1} * dA_j * A_{j+1}...A_i * pi_i
+ * 只用结果的第 3 行，而 row2(M * A) = row2(M) * A，所以只递推一个 1x4 行向量 v：
+ *     v0 = row2(T_{j-1}) * dA_j,  v = v * A_i (i = j+1..6),  tau_j += g * (v . pi_i)
+ * dA_j 由 A_j 直接得到：前两列互换并取负，后两列与 q 无关。 */
 
-/* 静态工作区（约 7*64 + 8*16 字节），不占控制任务的栈 */
+/* 静态工作区，不占栈 */
 static float s_A[ARM_GRAVITY_DOF][4][4];        /* A[k] = T_{k,k+1} */
 static float s_row2[ARM_GRAVITY_DOF + 1U][4];   /* s_row2[k] = T_{0..k-1} 的第 3 行 */
 

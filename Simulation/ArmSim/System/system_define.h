@@ -8,8 +8,14 @@
 #define TASK_ARM_PERIOD_MS            2U
 #define TASK_PLANT_PERIOD_MS          2U      /* 必须等于 MJCF 的 timestep */
 #define TASK_MONITOR_PERIOD_MS        100U
+#define TASK_HOST_PERIOD_MS           2U
 
 #define SIM_DEFAULT_DURATION_S        8.0
+
+/* 上位机链路：JOINT_STATE 每 HOST_STATE_DIVIDER 个 Host 周期上报一次（2 ms * 5 = 100 Hz），
+ * 数值与实机 system_define.h 相同。链路是 pty，这里给它一个固定名字的软链接。 */
+#define HOST_STATE_DIVIDER            5U
+#define HOST_LINK_PATH                "/tmp/armsim-host"
 
 /* ---- 仿真专用的电机参数，不属于 URDF ----
  * 关节反射转子惯量 + 粘性阻尼。DIY/robot.xml 里没有这两项，远端关节惯量
