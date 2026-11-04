@@ -215,7 +215,7 @@
     <geom class="collision" mesh="base_col10" pos="0 0 0" quat="1 0 0 0" contype="0" conaffinity="0" />
     <geom class="collision" mesh="base_col11" pos="0 0 0" quat="1 0 0 0" contype="0" conaffinity="0" />
     <body name="link1" pos="0.000558840342 -0.0208529944 0.038" quat="0.4999999999 0.5 -0.5 0.5000000001">
-      <joint name="joint1" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+      <joint name="joint1" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
       <site class="dh" name="dh1" pos="0 0 0" />
       <inertial pos="0.072688485 -2.4545347e-05 -0.0178754176" mass="1.38243794" fullinertia="0.000983629911 0.0220713496 0.0219171915 -1.92898481e-06 -0.00117958613 -3.36330008e-07" />
       <geom class="visual" mesh="link1_vis" pos="-0.038 0.000558840342 -0.0208529944" quat="0.4999999999 -0.5 0.5000000001 -0.5" />
@@ -232,7 +232,7 @@
       <geom class="collision" mesh="link1_col10" pos="-0.038 0.000558840342 -0.0208529944" quat="0.4999999999 -0.5 0.5000000001 -0.5" />
       <geom class="collision" mesh="link1_col11" pos="-0.038 0.000558840342 -0.0208529944" quat="0.4999999999 -0.5 0.5000000001 -0.5" />
       <body name="link2" pos="0.4105 0 -0.0897" quat="0.806381626 0 0 -0.5913955303">
-        <joint name="joint2" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+        <joint name="joint2" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
         <site class="dh" name="dh2" pos="0 0 0" />
         <inertial pos="-2.353870721e-06 -0.001122344311 0.0803259038" mass="1.02434816" fullinertia="0.001514694786 0.001494681874 0.00116967512 3.755838396e-09 4.305966811e-07 -8.833553493e-05" />
         <geom class="visual" mesh="link2_vis" pos="-0.1353084515 -0.4276028359 0.0688470056" quat="0.6988885781 -0.6988885782 0.107493048 -0.107493048" />
@@ -249,7 +249,7 @@
         <geom class="collision" mesh="link2_col10" pos="-0.1353084515 -0.4276028359 0.0688470056" quat="0.6988885781 -0.6988885782 0.107493048 -0.107493048" />
         <geom class="collision" mesh="link2_col11" pos="-0.1353084515 -0.4276028359 0.0688470056" quat="0.6988885781 -0.6988885782 0.107493048 -0.107493048" />
         <body name="link3" pos="-4.516084733e-11 4.377060424e-10 0" quat="0.4999999999 0.5 0.5 -0.5000000001">
-          <joint name="joint3" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+          <joint name="joint3" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
           <site class="dh" name="dh3" pos="0 0 0" />
           <inertial pos="-3.65331e-05 -0.005640472047 -0.003646381605" mass="1.01148181" fullinertia="0.00132904677 0.0008660544576 0.001533068825 -1.179088084e-07 1.030261928e-06 1.922090046e-05" />
           <geom class="visual" mesh="link3_vis" pos="-0.0688470056 -0.1353084515 0.4276028363" quat="-0.1074930481 0.698888578 0.6988885782 0.1074930478" />
@@ -266,7 +266,7 @@
           <geom class="collision" mesh="link3_col10" pos="-0.0688470056 -0.1353084515 0.4276028363" quat="-0.1074930481 0.698888578 0.6988885782 0.1074930478" />
           <geom class="collision" mesh="link3_col11" pos="-0.0688470056 -0.1353084515 0.4276028363" quat="-0.1074930481 0.698888578 0.6988885782 0.1074930478" />
           <body name="link4" pos="0 -0.1880000003 0" quat="0.4999999999 0.5 0.5 -0.5000000001">
-            <joint name="joint4" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+            <joint name="joint4" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
             <site class="dh" name="dh4" pos="0 0 0" />
             <inertial pos="2.034580296e-05 0.0006463034 -0.0937471993" mass="0.472403018" fullinertia="0.0006328149175 0.000591956568 0.0002315260575 4.704622337e-07 1.277273223e-06 -2.607195447e-05" />
             <geom class="visual" mesh="link4_vis" pos="-0.4276028363 -0.0688470056 -0.05269154884" quat="0.5913955303 -4.409438532e-11 0.806381626 -4.409438532e-11" />
@@ -283,7 +283,7 @@
             <geom class="collision" mesh="link4_col10" pos="-0.4276028363 -0.0688470056 -0.05269154884" quat="0.5913955303 -4.409438532e-11 0.806381626 -4.409438532e-11" />
             <geom class="collision" mesh="link4_col11" pos="-0.4276028363 -0.0688470056 -0.05269154884" quat="0.5913955303 -4.409438532e-11 0.806381626 -4.409438532e-11" />
             <body name="link5" pos="-3.963416205e-10 0.0025 0" quat="0.05699386326 0.05699386354 -0.7048061433 0.7048061432">
-              <joint name="joint5" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+              <joint name="joint5" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
               <site class="dh" name="dh5" pos="0 0 0" />
               <inertial pos="7.228498223e-06 -0.007099498355 0.0006790091" mass="0.498883856" fullinertia="0.000531058246 0.000332985789 0.00040315383 -8.800051781e-08 9.262804663e-08 -3.340349173e-06" />
               <geom class="visual" mesh="link5_vis" pos="0.4135805069 0.1207134993 0.0713470056" quat="0.5346368078 -0.5346368079 -0.4627780069 0.4627780068" />
@@ -300,7 +300,7 @@
               <geom class="collision" mesh="link5_col10" pos="0.4135805069 0.1207134993 0.0713470056" quat="0.5346368078 -0.5346368079 -0.4627780069 0.4627780068" />
               <geom class="collision" mesh="link5_col11" pos="0.4135805069 0.1207134993 0.0713470056" quat="0.5346368078 -0.5346368079 -0.4627780069 0.4627780068" />
               <body name="link6" pos="-8.928974574e-11 -0.2069999997 0" quat="0.7040293017 0.7040293018 -0.06589948589 0.06589948591">
-                <joint name="joint6" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+                <joint name="joint6" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
                 <site class="dh" name="dh6" pos="0 0 0" />
                 <inertial pos="-0.0002813070617 -0.007479452889 -0.104452338" mass="0.89386677" fullinertia="0.002156920125 0.00193430089 0.0006301427282 -9.676949364e-06 2.839689551e-05 0.0002679484616" />
                 <geom class="visual" mesh="link6_vis" pos="0.4196368384 -0.006644911153 -0.3277134989" quat="-0.06099366563 0.7527999571 -0.0704645817 -0.6516185541" />
@@ -317,7 +317,7 @@
                 <geom class="collision" mesh="link6_col10" pos="0.4196368384 -0.006644911153 -0.3277134989" quat="-0.06099366563 0.7527999571 -0.0704645817 -0.6516185541" />
                 <geom class="collision" mesh="link6_col11" pos="0.4196368384 -0.006644911153 -0.3277134989" quat="-0.06099366563 0.7527999571 -0.0704645817 -0.6516185541" />
                 <body name="link7" pos="-5.069724573e-09 -4.239384809e-09 0" quat="-0.1898067571 -0.1898067568 -0.6811559257 0.6811559255">
-                  <joint name="joint7" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+                  <joint name="joint7" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
                   <site class="dh" name="dh7" pos="0 0 0" />
                   <inertial pos="-0.002039493123 -0.02497530239 0.004505419922" mass="0.0778854972" fullinertia="0.0001634824981 0.0001741784636 4.487943129e-05 -7.198517335e-07 7.544343655e-06 -6.450576053e-07" />
                   <geom class="visual" mesh="link7_vis" pos="-0.1896867926 0.497503908 0.006644906921" quat="0.5271659808 0.646314735 0.41726409 0.3609210041" />
@@ -334,7 +334,7 @@
                   <geom class="collision" mesh="link7_col10" pos="-0.1896867926 0.497503908 0.006644906921" quat="0.5271659808 0.646314735 0.41726409 0.3609210041" />
                   <geom class="collision" mesh="link7_col11" pos="-0.1896867926 0.497503908 0.006644906921" quat="0.5271659808 0.646314735 0.41726409 0.3609210041" />
                   <body name="link8" pos="4.533674991e-10 0 0" quat="0.7071067811 0.7071067813 0 0">
-                    <joint name="joint8" type="hinge" axis="0 0 1" range="-3.14159 3.14159" limited="true" />
+                    <joint name="joint8" type="hinge" axis="0 0 1" solreflimit="0.005 1" range="-3.14159 3.14159" limited="true" />
                     <site class="dh" name="dh8" pos="0 0 0" />
                     <inertial pos="2.667059867e-05 -1.549138362e-05 0.05079244273" mass="0.722521768" fullinertia="0.001145290794 0.001062234815 0.0003620177569 1.539416351e-07 7.15861373e-07 -2.474980261e-07" />
                     <geom class="visual" mesh="link8_vis" pos="-0.189686793 0.006644906863 -0.497503908" quat="0.8297761718 0.08425089203 0.550259957 -0.03984057816" />
@@ -351,7 +351,7 @@
                     <geom class="collision" mesh="link8_col10" pos="-0.189686793 0.006644906863 -0.497503908" quat="0.8297761718 0.08425089203 0.550259957 -0.03984057816" />
                     <geom class="collision" mesh="link8_col11" pos="-0.189686793 0.006644906863 -0.497503908" quat="0.8297761718 0.08425089203 0.550259957 -0.03984057816" />
                     <body name="link9" pos="5.898575179e-05 -0.02111823484 0.1412926713" quat="0.7383233834 -0.6697245453 0.05901123033 -0.05352840006">
-                      <joint name="gripper_finger1_joint" type="slide" axis="0 0 1" range="0 0.015" limited="true" />
+                      <joint name="gripper_finger1_joint" type="slide" axis="0 0 1" solreflimit="0.005 1" range="0 0.015" limited="true" />
                       <site class="dh" name="dh9" pos="0 0 0" />
                       <inertial pos="0.005914798438 0.01085168128 -0.02229917446" mass="0.0585577487" fullinertia="3.146123224e-05 1.771594736e-05 2.67274542e-05 -2.355533941e-06 -3.102419303e-06 -2.51381309e-06" />
                       <geom class="visual" mesh="link9_vis" pos="-0.1818627195 0.6384701122 -0.06416532956" quat="0.5908223796 0.5908223797 0.3884957088 0.3884957087" />
@@ -369,7 +369,7 @@
                       <geom class="collision" mesh="link9_col11" pos="-0.1818627195 0.6384701122 -0.06416532956" quat="0.5908223796 0.5908223797 0.3884957088 0.3884957087" />
                     </body>
                     <body name="link10" pos="-0.01067974883 0.01792824035 0.1368199868" quat="0.6697245456 0.7383233832 -0.05352840004 -0.05901123035">
-                      <joint name="gripper_finger2_joint" type="slide" axis="0 0 1" range="0 0.015" limited="true" />
+                      <joint name="gripper_finger2_joint" type="slide" axis="0 0 1" solreflimit="0.005 1" range="0 0.015" limited="true" />
                       <site class="dh" name="dh10" pos="0 0 0" />
                       <inertial pos="0.004398851781 -0.01094763269 -0.02505534888" mass="0.0585577487" fullinertia="3.157498768e-05 1.889443102e-05 2.54350774e-05 -1.320842579e-06 3.351998751e-06 4.130269219e-06" />
                       <geom class="visual" mesh="link10_vis" pos="-0.1651567096 -0.6302229999 0.1003985591" quat="0.5908223796 -0.5908223797 0.3884957088 -0.3884957087" />
@@ -395,7 +395,46 @@
       </body>
     </body>
   </worldbody>
+  <tendon>
+    <fixed name="gripper_tendon">
+      <joint joint="gripper_finger1_joint" coef="0.5" />
+      <joint joint="gripper_finger2_joint" coef="0.5" />
+    </fixed>
+  </tendon>
+  <equality>
+    <joint name="gripper_symmetry" joint1="gripper_finger1_joint" joint2="gripper_finger2_joint" polycoef="0 1 -1 0 0" solref="0.005 1" />
+  </equality>
+  <actuator>
+    <motor name="act_joint1" joint="joint1" ctrlrange="-100 100" />
+    <motor name="act_joint2" joint="joint2" ctrlrange="-100 100" />
+    <motor name="act_joint3" joint="joint3" ctrlrange="-100 100" />
+    <motor name="act_joint4" joint="joint4" ctrlrange="-100 100" />
+    <motor name="act_joint5" joint="joint5" ctrlrange="-100 100" />
+    <motor name="act_joint6" joint="joint6" ctrlrange="-100 100" />
+    <motor name="act_joint7" joint="joint7" ctrlrange="-100 100" />
+    <motor name="act_joint8" joint="joint8" ctrlrange="-100 100" />
+    <motor name="act_gripper" tendon="gripper_tendon" ctrlrange="-100 100" />
+  </actuator>
+  <sensor>
+    <jointpos joint="joint1" name="joint1_pos" />
+    <jointvel joint="joint1" name="joint1_vel" />
+    <jointpos joint="joint2" name="joint2_pos" />
+    <jointvel joint="joint2" name="joint2_vel" />
+    <jointpos joint="joint3" name="joint3_pos" />
+    <jointvel joint="joint3" name="joint3_vel" />
+    <jointpos joint="joint4" name="joint4_pos" />
+    <jointvel joint="joint4" name="joint4_vel" />
+    <jointpos joint="joint5" name="joint5_pos" />
+    <jointvel joint="joint5" name="joint5_vel" />
+    <jointpos joint="joint6" name="joint6_pos" />
+    <jointvel joint="joint6" name="joint6_vel" />
+    <jointpos joint="joint7" name="joint7_pos" />
+    <jointvel joint="joint7" name="joint7_vel" />
+    <jointpos joint="joint8" name="joint8_pos" />
+    <jointvel joint="joint8" name="joint8_vel" />
+  </sensor>
   <contact>
+    <exclude body1="link1" body2="world" />
     <exclude body1="link1" body2="link2" />
     <exclude body1="link2" body2="link3" />
     <exclude body1="link3" body2="link4" />

@@ -24,7 +24,6 @@ import xml.etree.ElementTree as ET
 HERE = Path(__file__).resolve().parent
 DEFAULT_URDF = HERE.parent.parent / "【装配体】单臂" / "robot.urdf"
 
-
 def vec(e, key):
     return [float(x) for x in e.get(key).split()]
 
@@ -153,12 +152,83 @@ def add_joint(body, joint):
     typ = joint.get("type")
     jt = "slide" if typ == "prismatic" else "hinge"
     axis = vec(joint.find("axis"), "xyz")
-    attrs = {"name": joint.get("name"), "type": jt, "axis": fmt(axis)}
+    # Torque actuators can drive into the mechanical stops, and the default
+    # soft joint limit lets the joint overshoot visibly (several mm at the
+    # gripper).  Use a stiffer limit spring instead (MuJoCo default is 0.02).
+    attrs = {"name": joint.get("name"), "type": jt, "axis": fmt(axis),
+             "solreflimit": "0.005 1"}
     lim = joint.find("limit")
     if lim is not None:
         attrs["range"] = "%s %s" % (lim.get("lower"), lim.get("upper"))
         attrs["limited"] = "true"
     ET.SubElement(body, "joint", attrs)
+
+
+def add_actuators(root, joints):
+    """Add torque (motor) actuators for the arm and the symmetric gripper.
+
+    ``<motor>`` is the direct-force actuator: ctrl is the joint torque [N*m],
+    clamped to the URDF effort.  The two finger prismatic joints are
+    mechanically coupled by the equality constraint q1 == q2, so both fingers
+    always sit the same distance from the gripper centre line.  A single fixed
+    tendon with length (q1 + q2) / 2 is driven by one motor, which keeps the
+    actuation symmetric as well; its ctrl is the tendon tension [N], split
+    0.5 / 0.5 to the two fingers.
+    """
+    tendon = ET.SubElement(root, "tendon")
+    fixed = ET.SubElement(tendon, "fixed", {"name": "gripper_tendon"})
+    for j in ("gripper_finger1_joint", "gripper_finger2_joint"):
+        ET.SubElement(fixed, "joint", {"joint": j, "coef": "0.5"})
+
+    equality = ET.SubElement(root, "equality")
+    ET.SubElement(equality, "joint", {
+        "name": "gripper_symmetry",
+        "joint1": "gripper_finger1_joint",
+        "joint2": "gripper_finger2_joint",
+        "polycoef": "0 1 -1 0 0",     # q1 - q2 == 0
+        "solref": "0.005 1",
+    })
+
+    limits = {j.get("name"): j.find("limit") for j in joints}
+    actuator = ET.SubElement(root, "actuator")
+    for j in joints:
+        name = j.get("name")
+        if not name.startswith("joint"):
+            continue          # skip the two gripper finger joints
+        effort = float(limits[name].get("effort"))
+        ET.SubElement(actuator, "motor", {
+            "name": "act_" + name,
+            "joint": name,
+            "ctrlrange": "-%g %g" % (effort, effort),
+        })
+    grip = limits["gripper_finger1_joint"]
+    # coef=0.5 means the tendon force reaches each finger halved, so twice the
+    # per-joint effort is allowed at the tendon (100 N -> 50 N per finger).
+    grip_effort = 2.0 * float(grip.get("effort"))
+    ET.SubElement(actuator, "motor", {
+        "name": "act_gripper",
+        "tendon": "gripper_tendon",
+        "ctrlrange": "-%g %g" % (grip_effort, grip_effort),
+    })
+
+
+def add_sensors(root, joints):
+    """Add angle / angular-velocity sensors to the revolute arm joints.
+
+    ``jointpos`` = joint angle [rad]
+    ``jointvel`` = angular velocity [rad/s]
+
+    MuJoCo has no ``jointacc`` sensor type.  The angular acceleration is
+    already computed every step in ``mjData.qacc``; read it with
+    ``data.qacc[model.jnt_dofadr[joint_id]]`` (no extra sensor needed).
+    """
+    sensor = ET.SubElement(root, "sensor")
+    for j in joints:
+        if j.get("type") != "revolute":
+            continue          # the two gripper joints are prismatic
+        name = j.get("name")
+        ET.SubElement(sensor, "jointpos", {"joint": name, "name": name + "_pos"})
+        ET.SubElement(sensor, "jointvel", {"joint": name, "name": name + "_vel"})
 
 
 def add_body(parent, link_name, joint, links, outgoing, book, site_counter):
@@ -228,6 +298,9 @@ def main():
             add_body(worldbody, j.find("child").get("link"), j,
                      links, outgoing, book, site_counter)
 
+    add_actuators(root, joints)
+    add_sensors(root, joints)
+
     asset = ET.Element("asset")
     for name, filename in book.entries:
         ET.SubElement(asset, "mesh", {"name": name, "file": filename})
@@ -241,6 +314,12 @@ def main():
     root.insert(2, asset)
 
     contact = ET.Element("contact")
+    # link1 sits on the floor plane at q=0 and its collision meshes dip a few
+    # mm below z=0.  The resulting contact forces have a huge friction torque
+    # about joint1 and lock it (the servo saturates and the joint only creeps
+    # ~3 deg).  The base is welded to the world, so link1 never needs to
+    # collide with the ground; other links keep their floor contacts.
+    ET.SubElement(contact, "exclude", {"body1": "link1", "body2": "world"})
     for j in joints:
         p = j.find("parent").get("link")
         c = j.find("child").get("link")
