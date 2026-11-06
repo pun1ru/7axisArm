@@ -10,8 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np  # noqa: E402
 
-from armhost.kinematics import (BUILTIN_DH, FIRMWARE_MODULE_INIT, DHRow, DHTable, default_dh,  # noqa: E402
-                                euler_zyx_deg, forward_frames, link_transform)
+from armhost.kinematics import (ARMSIM_MAIN, BIGARM_BASE_RPY_DEG, BIGARM_BASE_XYZ_M, BIGARM_DH,  # noqa: E402
+                                BUILTIN_DH, FIRMWARE_MODULE_INIT, DHRow, DHTable, current_dh,
+                                default_dh, euler_zyx_deg, forward_frames, link_transform)
 
 
 class TestDH(unittest.TestCase):
@@ -34,6 +35,31 @@ class TestDH(unittest.TestCase):
             p.write_text("#define ARM_DH_J1 {0,0,0,0}\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 DHTable.from_firmware_source(p)
+
+    def test_current_bigarm_dh_and_world_frames(self):
+        if not ARMSIM_MAIN.exists():
+            self.skipTest("没有 ArmSim 源码")
+        t = DHTable.from_armsim_source()
+        self.assertEqual([r.as_tuple() for r in t.rows], [r.as_tuple() for r in BIGARM_DH],
+                         "main.cpp 的 DH 改了，同步 armhost/kinematics/dh.py 的 BIGARM_DH")
+        np.testing.assert_allclose(t.base_xyz_m, BIGARM_BASE_XYZ_M, atol=1e-12)
+        np.testing.assert_allclose(t.base_rpy_deg, BIGARM_BASE_RPY_DEG, atol=1e-6)
+        self.assertEqual(t.source, "ArmSim BigArm main.cpp")
+
+        expected_world_mm = np.array([
+            [0.558840, -20.852994, 38.000000],
+            [0.558840, 68.847006, 448.500000],
+            [0.558840, 68.847006, 448.500000],
+            [-178.751984, 68.847006, 392.005501],
+            [-178.751984, 71.347006, 392.005501],
+            [-383.614217, 71.347006, 362.332865],
+            [-383.614217, 71.347006, 362.332865],
+            [-383.614217, 71.347006, 362.332865],
+        ])
+        frames = forward_frames(t, [0.0] * t.n)
+        world_mm = np.array([(t.base_transform @ f)[:3, 3] * 1000.0 for f in frames])
+        np.testing.assert_allclose(world_mm, expected_world_mm, atol=1e-4)
+        self.assertEqual(current_dh().source, t.source)
 
     def test_zero_pose_matches_dh_params_md(self):
         """dh_params.md 7.3：理想版 O_1=O_2 在 +62.6 mm，O_3=O_4 在 +210.6 mm，O_5=O_6=O_7 在 +310.6 mm（相对 O_0）
@@ -80,11 +106,18 @@ class TestDH(unittest.TestCase):
     def test_json_roundtrip(self):
         t = DHTable()
         t.rows[3].d_m = 0.123
+        t.base_xyz_m = (0.001, -0.002, 0.038)
+        t.base_rpy_deg = (90.0, -90.0, 0.0)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dh.json"
             t.save_json(p)
-            self.assertIn("rows", json.loads(p.read_text(encoding="utf-8")))
-            self.assertEqual(DHTable.load_json(p).rows[3].d_m, 0.123)
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            self.assertIn("rows", raw)
+            self.assertEqual(raw["base"]["xyz_m"], list(t.base_xyz_m))
+            loaded = DHTable.load_json(p)
+            self.assertEqual(loaded.rows[3].d_m, 0.123)
+            self.assertEqual(loaded.base_xyz_m, t.base_xyz_m)
+            self.assertEqual(loaded.base_rpy_deg, t.base_rpy_deg)
 
 
 if __name__ == "__main__":

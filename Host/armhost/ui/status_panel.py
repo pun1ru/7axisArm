@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QVBoxLayout, QWidget
 
-from ..model import RobotSample, TimingStats
+from ..model import RobotSample, TimingStats, posture_text
 from ..protocol.enums import ArmState, MsgType, StatusFlag
 from . import theme
 
@@ -52,6 +52,7 @@ class StatusPanel(QWidget):
             ("rc", "遥控", "DT7 在线 / 拨杆"),
             ("flags", "标志", "status_flags"),
             ("cmd_age", "上位机指令", "距上一条有效力矩设定"),
+            ("posture", "分支 / 臂角", "当前 IK 分支和臂角 ψ，来自 ARM_POSTURE"),
         ])
         self.time = _Form("时间", [
             ("mcu_t", "MCU 采样时刻", "帧内 mcu_time_us，已展开回绕"),
@@ -99,6 +100,7 @@ class StatusPanel(QWidget):
             except ValueError:
                 arm = str(sample.arm_state)
             d.set("arm", f"{_dot(theme.OK if sample.arm_state == ArmState.ENABLE else theme.MUTED)} {arm}")
+            d.set("posture", posture_text(sample.posture))
             f = StatusFlag(sample.status_flags)
             rc_on = StatusFlag.RC_ONLINE in f
             sw = f"  L{sysst.rc_switch_left} R{sysst.rc_switch_right}" if sysst else ""

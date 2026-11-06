@@ -6,13 +6,13 @@
 
 | # | 冲突 / 缺失 | 处理 |
 |---|---|---|
-| 1 | 固件 `observer.joint_deg` 已改为**多圈角**，并新增 `joint_abs_deg`；协议文档原写 angle_deg 为 (-180,180] | 上位机按多圈角处理（三维用三角函数，滑块显示时折到 ±180）。**协议文档第 2、5 节需要你确认后改口径**；`joint_abs_deg` 目前没上报，需要的话在关节记录末尾追加（向前兼容） |
+| 1 | 固件 `observer.joint_deg` 已改为**多圈角**，并新增 `joint_abs_deg`；协议文档原写 angle_deg 为 (-180,180] | 上位机按多圈角处理。Host 单关节目标已改为多圈目标，并通过 flags 兼容旧单圈帧；协议文档已更新。`joint_abs_deg` 目前没上报，需要的话在关节记录末尾追加（向前兼容） |
 | 2 | 固件 `ArmJointCtrl_t` 新增 `limit_min_deg / limit_max_deg`（多圈锁存区间） | 协议未上报，不影响现有功能；需要时同样追加到记录末尾 |
 | 3 | 固件 `ARM_LIMIT_Jx`、`ARM_GAIN_Jx` 已改成实测值 | 上位机不缓存这些值，读参数时以设备为准 |
 | 4 | 界面只认 MockBackend / SerialBackend | 新增 `SimBackend`（仿真），和其它后端同一接口 |
 | 5 | 没有配置文件 | 新增 `config/settings.toml`（只读，标准库 tomllib），坏文件弹窗提示并用默认值 |
 | 6 | 未捕获异常会被 Qt 吞掉 | 全局 `sys.excepthook` + `threading.excepthook`：写日志并弹窗 |
-| 7 | `Real/` 下的固件参考实现仍未移植 | 不动 `Real/`，见第 7 节 |
+| 7 | `Real/` 下的固件参考实现仍未完整移植 | 已同步 Host 单关节多圈目标与旧单圈帧兼容；完整移植仍按验收清单执行 |
 
 已通过测试的代码（协议、通信、波形）**没有重写**，只做了接入。
 

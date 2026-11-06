@@ -33,10 +33,12 @@ enum {
     ARM_MSG_JOINT_STATE      = 0x10,
     ARM_MSG_SYSTEM_STATUS    = 0x11,
     ARM_MSG_EVENT            = 0x12,
+    ARM_MSG_ARM_POSTURE      = 0x13,
     ARM_MSG_SET_JOINT_TORQUE = 0x20,
     ARM_MSG_CLEAR_TORQUE     = 0x21,
     ARM_MSG_ESTOP            = 0x22,
     ARM_MSG_SET_HOST_TARGET  = 0x23,
+    ARM_MSG_SET_IK_TARGET    = 0x24,
     ARM_MSG_PARAM_READ       = 0x28,
     ARM_MSG_PARAM_WRITE      = 0x29,
     ARM_MSG_PARAM_VALUE      = 0x2A,
@@ -68,6 +70,15 @@ enum {
     ARM_HOST_ACTION_SET_CLOSED,
     ARM_HOST_ACTION_STOP_ALL,
 };
+
+/* SET_HOST_TARGET flags */
+#define ARM_HOST_TARGET_FLAG_MULTI_TURN 0x01U
+
+/* SET_IK_TARGET action */
+enum { ARM_IK_ACTION_SET = 0, ARM_IK_ACTION_STOP };
+
+/* SET_IK_TARGET psi_mode */
+enum { ARM_IK_PSI_MANUAL = 0, ARM_IK_PSI_AUTO };
 
 enum {
     ARM_EV_BOOT = 0x01, ARM_EV_ARM_STATE_CHANGED = 0x02,
@@ -146,6 +157,18 @@ typedef struct ARM_PACKED {
     uint32_t mcu_time_us; uint16_t code; uint8_t severity, source; int32_t value;
 } ArmMsgEvent_t;
 
+typedef struct ARM_PACKED {
+    uint8_t branch, flags; uint16_t reserved; float psi_deg;
+    float x, y, z, roll, pitch, yaw;
+} ArmMsgArmPosture_t;
+
+typedef struct ARM_PACKED {
+    uint8_t action, branch, psi_mode, reserved;
+    float x, y, z, roll, pitch, yaw, psi_deg;
+    float cost_weight[7];
+    uint32_t reserved2;
+} ArmMsgSetIkTarget_t;
+
 typedef struct ARM_PACKED { uint16_t hold_ms; uint8_t count, reserved; } ArmMsgSetTorqueHead_t;
 typedef struct ARM_PACKED { uint8_t joint; float torque_nm; } ArmTorqueItem_t;
 typedef struct ARM_PACKED { uint32_t joint_mask; } ArmMsgClearTorque_t;
@@ -170,6 +193,8 @@ ARM_STATIC_ASSERT(sizeof(ArmMsgJointStateHead_t) == 12, jhead);
 ARM_STATIC_ASSERT(sizeof(ArmMsgSystemStatusHead_t) == 32, shead);
 ARM_STATIC_ASSERT(sizeof(ArmCanStatus_t) == 12, can);
 ARM_STATIC_ASSERT(sizeof(ArmMsgEvent_t) == 12, ev);
+ARM_STATIC_ASSERT(sizeof(ArmMsgArmPosture_t) == 32, posture);
+ARM_STATIC_ASSERT(sizeof(ArmMsgSetIkTarget_t) == 64, ik);
 ARM_STATIC_ASSERT(sizeof(ArmTorqueItem_t) == 5, titem);
 ARM_STATIC_ASSERT(sizeof(ArmMsgParamValue_t) == 12, pval);
 

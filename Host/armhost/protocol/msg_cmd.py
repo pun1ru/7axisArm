@@ -8,16 +8,19 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from .enums import AckResult, EstopAction, HostTargetAction, MsgType, ParamType
+from .enums import AckResult, EstopAction, HostIkAction, HostTargetAction, MsgType, ParamType
 from .msg_link import DecodeError, as_enum, need
 
 _VALUE_FMT = {ParamType.U8: "<B3x", ParamType.I8: "<b3x", ParamType.U16: "<H2x",
               ParamType.I16: "<h2x", ParamType.U32: "<I", ParamType.I32: "<i",
               ParamType.F32: "<f"}
+
+SET_HOST_TARGET_MULTI_TURN = 0x0001
 
 
 def pack_value(ptype: ParamType, value) -> bytes:
@@ -95,27 +98,92 @@ class Estop:
 
 @dataclass(slots=True)
 class SetHostTarget:
-    """0 joint u8 | 1 action u8 | 2 reserved u16 | 4 target_deg f32
+    """0 joint u8 | 1 action u8 | 2 flags u16 | 4 target_deg f32
 
     一帧只更新一个关节。SET_OPEN/SET_CLOSED 要求 joint in [0, 6]；
-    STOP_ALL 忽略 joint 和 target_deg，让全部关节退出闭环。"""
+    STOP_ALL 忽略 joint 和 target_deg，让全部关节退出闭环。
+    flags bit0 = 1 时 target_deg 为多圈角；0 为旧协议的 单圈绝对角。"""
     TYPE: ClassVar[int] = MsgType.SET_HOST_TARGET
     S: ClassVar[struct.Struct] = struct.Struct("<BBHf")
     joint: int = 0
     action: HostTargetAction | int = HostTargetAction.SET_OPEN
     target_deg: float = 0.0
+    multi_turn: bool = False
 
     def encode(self) -> bytes:
         action = HostTargetAction(self.action)
         if action != HostTargetAction.STOP_ALL and not 0 <= self.joint < 7:
             raise ValueError(f"SET_HOST_TARGET joint {self.joint} out of range")
-        return self.S.pack(self.joint, int(action), 0, float(self.target_deg))
+        if action != HostTargetAction.STOP_ALL and not math.isfinite(float(self.target_deg)):
+            raise ValueError("SET_HOST_TARGET target_deg must be finite")
+        flags = (SET_HOST_TARGET_MULTI_TURN
+                 if self.multi_turn and action != HostTargetAction.STOP_ALL else 0)
+        return self.S.pack(self.joint, int(action), flags, float(self.target_deg))
 
     @classmethod
     def decode(cls, p: bytes) -> "SetHostTarget":
         need(p, cls.S.size, "SET_HOST_TARGET")
-        joint, action, _reserved, target_deg = cls.S.unpack_from(p)
-        return cls(joint, as_enum(HostTargetAction, action), target_deg)
+        joint, action, flags, target_deg = cls.S.unpack_from(p)
+        return cls(joint, as_enum(HostTargetAction, action), target_deg,
+                   bool(flags & SET_HOST_TARGET_MULTI_TURN))
+
+
+@dataclass(slots=True)
+class SetIkTarget:
+    """0 action u8 | 1 branch u8 | 2 psi_mode u8 | 3 reserved u8
+    4 x f32 | 8 y f32 | 12 z f32
+    16 roll f32 | 20 pitch f32 | 24 yaw f32 | 28 psi_deg f32
+    32 cost_weight[7] f32 | 60 reserved u32，共 64 B
+
+    SET：从 HOST 进入或更新 HOST_IK。branch = bit0 肩 / bit1 肘 / bit2 腕，
+    置位表示对应 λ = -1。STOP：退出 HOST_IK 并让全部上位机闭环退出。
+    psi_mode=0 使用 psi_deg；psi_mode=1 在当前分支内按权重自动选择 ψ。
+    位姿使用 ForwardKinematics 的腰部连杆坐标系，角度单位 deg。"""
+    TYPE: ClassVar[int] = MsgType.SET_IK_TARGET
+    LEGACY_S: ClassVar[struct.Struct] = struct.Struct("<BBH7f")
+    S: ClassVar[struct.Struct] = struct.Struct("<BBBB7f7f4x")
+    action: HostIkAction | int = HostIkAction.SET
+    branch: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+    psi_deg: float = 0.0
+    auto_psi: bool = False
+    cost_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+
+    def encode(self) -> bytes:
+        action = HostIkAction(self.action)
+        weights = tuple(float(v) for v in self.cost_weights)
+        if len(weights) != 7:
+            raise ValueError("SET_IK_TARGET cost_weights must contain 7 values")
+        if action == HostIkAction.SET:
+            if not 0 <= self.branch < 8:
+                raise ValueError(f"SET_IK_TARGET branch {self.branch} out of range")
+            values = (self.x, self.y, self.z, self.roll, self.pitch, self.yaw, self.psi_deg)
+            if not all(math.isfinite(float(v)) for v in values):
+                raise ValueError("SET_IK_TARGET contains non-finite value")
+            if not all(math.isfinite(v) and v >= 0.0 for v in weights):
+                raise ValueError("SET_IK_TARGET cost_weights must be finite and non-negative")
+            if self.auto_psi and sum(weights) <= 0.0:
+                raise ValueError("SET_IK_TARGET auto psi needs at least one positive cost weight")
+        return self.S.pack(int(action), int(self.branch), int(bool(self.auto_psi)), 0,
+                           float(self.x), float(self.y), float(self.z), float(self.roll),
+                           float(self.pitch), float(self.yaw), float(self.psi_deg), *weights)
+
+    @classmethod
+    def decode(cls, p: bytes) -> "SetIkTarget":
+        if len(p) == cls.LEGACY_S.size:
+            action, branch, _reserved, x, y, z, roll, pitch, yaw, psi = cls.LEGACY_S.unpack_from(p)
+            return cls(as_enum(HostIkAction, action), branch, x, y, z, roll, pitch, yaw, psi)
+        need(p, cls.S.size, "SET_IK_TARGET")
+        action, branch, auto_psi, _reserved, x, y, z, roll, pitch, yaw, psi, *weights = cls.S.unpack_from(p)
+        if auto_psi not in (0, 1):
+            raise DecodeError(f"SET_IK_TARGET psi_mode {auto_psi} is invalid")
+        return cls(as_enum(HostIkAction, action), branch, x, y, z, roll, pitch, yaw, psi,
+                   bool(auto_psi), tuple(weights))
 
 
 @dataclass(slots=True)

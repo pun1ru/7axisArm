@@ -15,11 +15,13 @@ class MsgType(IntEnum):
     JOINT_STATE = 0x10        # mcu -> host 周期
     SYSTEM_STATUS = 0x11      # mcu -> host 周期
     EVENT = 0x12              # mcu -> host 事件
+    ARM_POSTURE = 0x13        # mcu -> host 周期，分支 / 臂角 / 末端位姿
     # 0x20~0x2F 控制
     SET_JOINT_TORQUE = 0x20   # host -> mcu
     CLEAR_TORQUE = 0x21       # host -> mcu
     ESTOP = 0x22              # host -> mcu
     SET_HOST_TARGET = 0x23    # host -> mcu
+    SET_IK_TARGET = 0x24      # host -> mcu，进入/更新/退出 HOST_IK
     # 0x28~0x2F 参数
     PARAM_READ = 0x28         # host -> mcu
     PARAM_WRITE = 0x29        # host -> mcu
@@ -36,6 +38,7 @@ class ArmState(IntEnum):
     AUTO = 4
     SERVANT = 5
     HOST = 6
+    HOST_IK = 7
 
 
 class ArmRole(IntEnum):
@@ -90,6 +93,23 @@ class HostTargetAction(IntEnum):
     SET_OPEN = 0              # 只保存目标，该关节不闭环
     SET_CLOSED = 1            # 保存目标，该关节投入闭环
     STOP_ALL = 2              # 全部关节退出闭环，目标保留
+
+
+class HostIkAction(IntEnum):
+    """SET_IK_TARGET 的 action"""
+    SET = 0                   # 进入或更新 HOST_IK 位姿 / ψ
+    STOP = 1                  # 退出 HOST_IK，回到 HOST
+
+
+class PostureFlag(IntFlag):
+    """ARM_POSTURE.flags"""
+    NONE = 0
+    VALID = 0x01              # 臂角 ψ 有效
+    SHOULDER_SINGULAR = 0x02  # 最近一次 IK 解处于肩奇异
+    WRIST_SINGULAR = 0x04     # 最近一次 IK 解处于腕奇异
+    IK_ACTIVE = 0x08          # 当前处于 HOST_IK
+    AUTO_PSI = 0x40           # 当前 HOST_IK 由固件自动选择 ψ
+    # bit4~5: 最近一次 IK 状态 0 OK / 1 OutOfReach / 2 RefDegenerate
 
 
 class AckResult(IntEnum):

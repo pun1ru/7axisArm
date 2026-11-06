@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..protocol.enums import ArmState, StatusFlag
-from ..protocol.msg_report import JointRecord
+from ..protocol.msg_report import ArmPosture, JointRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +26,24 @@ class RobotSample:
     status_flags: StatusFlag | int
     host_cmd_age_ms: int
     joints: tuple[JointRecord, ...]
+    posture: ArmPosture | None = None
+
+
+def branch_text(branch: int | None) -> str:
+    if branch is None or not 0 <= int(branch) < 8:
+        return "—"
+    b = int(branch)
+    signs = ("-" if b & 1 else "+", "-" if b & 2 else "+", "-" if b & 4 else "+")
+    return f"#{b} (λ2{signs[0]}, λ4{signs[1]}, λ6{signs[2]})"
+
+
+def posture_text(posture: ArmPosture | None) -> str:
+    if posture is None:
+        return "—"
+    branch = branch_text(posture.branch)
+    if not posture.valid:
+        return f"{branch}  ψ 无效"
+    return f"{branch}  ψ={posture.psi_deg:+.2f}°"
 
 
 @dataclass(frozen=True, slots=True)

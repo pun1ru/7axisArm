@@ -50,6 +50,7 @@ private:
     void SendReply(const Request &req, uint8_t reply_type, const uint8_t *payload, uint8_t length);
     void Ack(const Request &req, uint8_t result);
     void SendJointState(double sim_time_s, uint32_t now_ms);
+    void SendPosture();
     void PackJoint(int joint, uint8_t *out) const;
 
     // 命令
@@ -57,6 +58,7 @@ private:
     void ProcessParamRead(const Request &req);
     void ProcessDeviceInfo(const Request &req);
     void ProcessSetTarget(const Request &req, uint32_t now_ms);
+    void ProcessSetIkTarget(const Request &req, uint32_t now_ms);
     void ParamValue(uint16_t id, uint8_t index, uint8_t *value) const;
 
     // 收帧
@@ -70,6 +72,7 @@ private:
     HostLink &link_;
     uint16_t state_divider_;
     uint16_t divider_count_ = 0;
+    uint16_t posture_divider_count_ = 0;
     uint16_t sequence_ = 0;
     uint32_t last_rx_ms_ = 0;
     uint32_t last_cmd_ms_ = 0;

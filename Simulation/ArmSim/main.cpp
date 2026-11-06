@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -5,16 +6,21 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
+#include <string>
 #include <thread>
 
 #include "arm.h"
 #include "host.h"
 #include "host_link.h"
 #include "mujoco_world.h"
+#ifdef ARMSIM_HAS_VIEWER
+#include "viewer.h"
+#endif
 
 #ifndef ARMSIM_DEFAULT_XML
-#define ARMSIM_DEFAULT_XML "../mujoco/DIY/robot.xml"   // CMake 会覆盖成源码树里的绝对路径
+#define ARMSIM_DEFAULT_XML "../mujoco/BigArm/robot.xml"   // CMake 会覆盖成源码树里的绝对路径
 #endif
 
 namespace {
@@ -22,16 +28,15 @@ namespace {
 /*--------------------------------------仿真参数--------------------------------------*/
 constexpr double kControlPeriodS = 0.002;       // 必须等于 MJCF 的 timestep
 constexpr int kMonitorEverySteps = 50;          // 100 ms
-constexpr double kDefaultDurationS = 8.0;
 constexpr const char *kHostLinkPath = "/tmp/armsim-host";
 constexpr uint16_t kHostStateDivider = 5;       // 2 ms * 5 = 100 Hz，与实机相同
+constexpr int kSyncEverySteps = 4;              // 每 4 步（8 ms 仿真时间）把状态同步给窗口一次
 
-/* 仿真专用的电机参数，不属于 URDF。DIY/robot.xml 里没有这三项，远端关节惯量
- * 只有 1.5e-5 kg*m^2，纯力矩控制会抖；加上后与实机手感接近。置 0 就是“纯 MJCF”。 */
-constexpr double kJointArmature = 1.0e-3;       // kg*m^2
-constexpr double kJointDamping = 1.5;           // N*m*s/rad
-constexpr double kJointFrictionLoss = 0.15;     // N*m
-constexpr double kTorqueLimitNm = 20.0;         // 单关节安全限幅
+/* 仿真专用的电机参数，不属于 URDF。MJCF 里没有这三项；加上后远端小惯量关节不抖、能停住。
+ * 置 0 就是“纯 MJCF”。 */
+constexpr double kJointArmature = 1.0e-3;       // 转子反射惯量
+constexpr double kJointDamping = 0.05;          // 粘性阻尼，主要阻尼由控制器的 kd 提供
+constexpr double kJointFrictionLoss = 0.02;     // 库仑摩擦
 
 volatile std::sig_atomic_t g_stop = 0;
 
@@ -41,80 +46,121 @@ void OnSignal(int)
 }
 
 /*--------------------------------------机械臂参数--------------------------------------*/
-/* 增益、限位、DH、beta 全部来自实机。仿真电机与模型关节同轴：零点 0、方向 +1，
- * 真机的装配标定值（编码器零点、反装电机）在这里不需要。 */
-Arm::Config MakeArmConfig()
+/* 误差 deg -> 力矩 N*m，按关节惯量取 wn≈15 rad/s、阻尼比≈0.9 算出（惯量取自 q=0 时的质量矩阵对角线）。
+ * kd 是每周期误差增量的系数（周期并入 kd）。 */
+Arm::JointGain MakeGain(float kp, float kd, float output_max)
+{
+    Arm::JointGain gain;
+
+    gain.kp = kp;
+    gain.kd = kd;
+    gain.output_max = output_max;
+    gain.total_output_max = output_max;
+    return gain;
+}
+
+/* BigArm：joint1 是腰部，只起直立作用；joint2..joint8 是主臂 7 个关节；两个滑动关节是夹爪。
+ * 仿真电机与模型关节同轴：零点 0、方向 +1。 */
+Arm::Config MakeArmConfig(const MujocoWorld &world)
 {
     Arm::Config c;
 
     c.role = Arm::Role::Master;
     c.init_state = Arm::State::Protected;
 
-    /* 改进 DH，一行对应 J0..J6，末端坐标系为 {J6}，d 取自 DIY/dh_params.md */
+    /* base -> 腰部连杆（link1）的安装位姿，来自 URDF joint1 的 origin */
+    c.waist_joint = "joint1";
+    c.waist_mount = TransformFromXyzRpy({0.000558840342f, -0.0208529944f, 0.038f},
+                                        {1.570796327f, -1.570796327f, 0.0f});
+    c.waist_hold_deg = 0.0f;
+    c.waist_gain = MakeGain(3.89f, 233.6f, 30.0f);
+
+    c.joint_name = {"joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "joint8"};
+    c.joint_effort_limit = 100.0;   // URDF effort
+
+    /* 改进 DH，一行对应 joint2..joint8，末端坐标系为 {link8}，取自 mujoco/BigArm/dh_params.md */
     c.dh = {{
-        {0.0f,  0.0f,  0.0626f,             0.0f},
-        {90.0f, 0.0f, -0.00400004092454f,   0.0f},
-        {90.0f, 0.0f, -0.147999608f,        0.0f},
-        {90.0f, 0.0f, -0.00249973171439f,   0.0f},
-        {90.0f, 0.0f,  0.0999988885966f,    0.0f},
-        {90.0f, 0.0f, -0.000999402709942f,  0.0f},
-        {90.0f, 0.0f,  0.0f,                0.0f},
+        {0.0f,  0.4105f, -0.0897f,  -72.5122038f},
+        {90.0f, 0.0f,     0.0f,     -90.0f},
+        {90.0f, 0.0f,     0.188f,   -90.0f},
+        {90.0f, 0.0f,    -0.0025f,   170.7537190f},
+        {90.0f, 0.0f,     0.207f,    10.6949890f},
+        {90.0f, 0.0f,     0.0f,     -148.8585943f},
+        {90.0f, 0.0f,     0.0f,       0.0f},
     }};
     c.direction.fill(1);
     c.zero_point_rad.fill(0.0f);
-
     c.limit = {{
-        {-90.0f, 90.0f},
-        {-95.0f, 100.0f},
-        {-180.0f, 180.0f},
-        {-120.0f, 0.0f},
-        {-180.0f, 180.0f},
-        {-60.0f, 90.0f},
-        {-180.0f, 180.0f},
+        {-90.0f,   90.0f},   // J0
+        {-20.0f,  175.0f},   // J1
+        {-175.0f, 175.0f},   // J2
+        {-110.0f, 110.0f},   // J3
+        {-175.0f, 175.0f},   // J4
+        {-120.0f,  70.0f},   // J5
+        {-175.0f, 175.0f},   // J6
     }};
 
-    /* kp, ki, kd, d_alpha, sum_error_max, output_max, total_output_max
-     * 误差 deg -> 力矩 N*m，与实机 module_init.c 相同 */
-    const float gain[kJointCount][7] = {
-        {0.1f,   0.0f, 0.0f,   0.0f, 0.0f, 0.2f,  0.2f},
-        {0.5f,   0.0f, 0.0f,   0.0f, 0.0f, 2.5f,  2.5f},
-        {0.1f,   0.0f, 0.0f,   0.0f, 0.0f, 0.5f,  0.5f},
-        {0.1f,   0.0f, 0.0f,   0.0f, 0.0f, 0.6f,  0.6f},
-        {0.002f, 0.0f, 0.0f,   0.0f, 0.0f, 0.25f, 0.25f},
-        {0.003f, 0.0f, 0.0f,   0.0f, 0.0f, 0.2f,  0.2f},
-        {0.002f, 0.0f, 0.001f, 0.0f, 0.0f, 0.05f, 0.05f},
+    c.gain = {
+        MakeGain(1.12f,   67.2f, 30.0f),
+        MakeGain(1.10f,   65.9f, 20.0f),
+        MakeGain(0.0299f,  1.79f, 5.0f),
+        MakeGain(0.295f,  17.7f,  8.0f),
+        MakeGain(0.0106f,  0.636f, 3.0f),
+        MakeGain(0.0196f,  1.18f,  2.0f),
+        MakeGain(0.00236f, 0.141f, 2.0f),
     };
-    for (int i = 0; i < kJointCount; ++i)
-    {
-        c.gain[i].kp = gain[i][0];
-        c.gain[i].ki = gain[i][1];
-        c.gain[i].kd = gain[i][2];
-        c.gain[i].d_alpha = gain[i][3];
-        c.gain[i].sum_error_max = gain[i][4];
-        c.gain[i].output_max = gain[i][5];
-        c.gain[i].total_output_max = gain[i][6];
-    }
 
-    /* 12 维重力参数 beta = [h2x h2y ... h7x h7y]，来自实机重力辨识。
-     * J0 绕竖直轴，重力矩恒为 0，实机也没开 */
+    /* 夹爪：两指沿各自导轨移动，0 = 装配位姿（张开），0.015 m = 夹紧。误差 mm -> 每指力 N */
+    c.gripper.finger_joint = {"gripper_finger1_joint", "gripper_finger2_joint"};
+    c.gripper.open_m = 0.0f;
+    c.gripper.closed_m = 0.015f;
+    c.gripper.finger_effort_limit = 50.0;   // URDF effort
+    c.gripper.gain.kp = 0.596f;
+    c.gripper.gain.kd = 5.36f;
+    c.gripper.gain.output_max = 50.0f;
+
+    /* 重力前馈的连杆质量和质心直接取自模型，和物理引擎用同一份 CAD 数据。
+     * link[0] 是随腰部转动的 link1，link[1..7] 是 link2..link8；夹爪两指并入 link8 */
     c.gravity.enable = true;
     c.gravity.sign = 1;
-    c.gravity.joint_mask = GravityModel::kAllJoints & ~0x01U;
+    c.gravity.joint_mask = GravityModel::kAllJoints;
     c.gravity.g = GravityModel::kDefaultG;
-    c.gravity.beta = {
-        -0.00052f, +0.1739178400f,
-        -0.00375f, +0.00024f,
-        +0.00040f, -0.029266f,
-        +0.00053f, +0.00024f,
-        +0.00137f, +0.00916f,
-        -0.00116f, +0.00064f,
-    };
+    for (int i = 0; i < GravityModel::kDof; ++i)
+    {
+        const MujocoWorld::Inertial in = world.BodyInertial("link" + std::to_string(i + 1), false);
+
+        c.gravity.link[i].mass_kg = static_cast<float>(in.mass_kg);
+        for (int k = 0; k < 3; ++k)
+        {
+            c.gravity.link[i].com_m[k] = static_cast<float>(in.com_m[k]);
+        }
+    }
+    GravityModel::LinkInertia &tip = c.gravity.link[GravityModel::kDof - 1];
+    double tip_mass = tip.mass_kg;
+    std::array<double, 3> tip_moment = {tip.mass_kg * tip.com_m[0], tip.mass_kg * tip.com_m[1],
+                                        tip.mass_kg * tip.com_m[2]};
+    for (const char *finger : {"link9", "link10"})
+    {
+        const MujocoWorld::Inertial in = world.BodyInertial(finger, true);   // 折算到 link8 坐标系
+
+        tip_mass += in.mass_kg;
+        for (int k = 0; k < 3; ++k)
+        {
+            tip_moment[k] += in.mass_kg * in.com_m[k];
+        }
+    }
+    tip.mass_kg = static_cast<float>(tip_mass);
+    for (int k = 0; k < 3; ++k)
+    {
+        tip.com_m[k] = static_cast<float>(tip_moment[k] / tip_mass);
+    }
     return c;
 }
 
 /*--------------------------------------仿真输入--------------------------------------*/
-/* 替代实机的遥控器。按时间排序，每项只触发一次。接自己的算法时改这里，Arm 不用动。
- * 仿真没有真实关节摩擦，ENABLE 停留太久会慢慢漂，所以 0.5 s 就切到全关节闭环的 HOST。 */
+/* 替代实机的遥控器。按时间排序，每项只触发一次，触发完后臂保持最后的姿态一直跑。
+ * 接自己的算法时改这里，Arm 不用动。主臂第 0 个关节是 joint2。
+ * 从 t=0 就使能，不留保护状态，否则 6 kg 的臂会在零力矩下先塌一截。 */
 struct InputEvent {
     double time_s;
     void (*run)(Arm &arm, double time_s);
@@ -133,56 +179,73 @@ void InputHost(Arm &arm, double time_s)
 {
     if (arm.SetState(Arm::State::Host))
     {
-        /* 先让所有关节闭环在当前角度，再给 J1 一个目标 */
+        /* 先让所有关节闭环在当前角度，再给 joint2 一个目标 */
         for (int i = 0; i < kJointCount; ++i)
         {
-            arm.SetHostTarget(i, arm.observer().joint_abs_deg[i], true);
+            arm.SetHostTarget(i, arm.observer().joint.deg[i], true);
         }
-        arm.SetHostTarget(1, 20.0f, true);
-        std::printf("[input] t=%.2f -> HOST (所有关节闭环), J1 target +20 deg\n", time_s);
+        arm.SetHostTarget(0, 20.0f, true);
+        std::printf("[input] t=%.2f -> HOST (所有关节闭环), joint2 target +20 deg\n", time_s);
     }
+}
+
+void InputGripClose(Arm &arm, double time_s)
+{
+    arm.SetGripperTarget(0.008f);
+    std::printf("[input] t=%.2f -> gripper close to 8 mm\n", time_s);
 }
 
 void InputReturn(Arm &arm, double time_s)
 {
     if (arm.state() == Arm::State::Host)
     {
-        arm.SetHostTarget(1, 0.0f, true);
-        std::printf("[input] t=%.2f -> J1 target 0 deg\n", time_s);
+        arm.SetHostTarget(0, 0.0f, true);
+        std::printf("[input] t=%.2f -> joint2 target 0 deg\n", time_s);
     }
 }
 
+void InputGripOpen(Arm &arm, double time_s)
+{
+    arm.SetGripperTarget(0.0f);
+    std::printf("[input] t=%.2f -> gripper open\n", time_s);
+}
+
 constexpr InputEvent kInputEvents[] = {
-    {0.2, InputEnable},
+    {0.0, InputEnable},
     {0.5, InputHost},
+    {2.0, InputGripClose},
     {3.5, InputReturn},
+    {5.0, InputGripOpen},
 };
 
 /*--------------------------------------监视--------------------------------------*/
 void PrintStatus(const MujocoWorld &world, const Arm &arm)
 {
     const Arm::Observer &obs = arm.observer();
-    const auto tcp = world.TcpPosition().value_or(std::array<double, 3>{});
-    float tau_max = 0.0f;
+    const Arm::Output &out = arm.control().output;
+    const auto tcp = world.SitePosition("dh8").value_or(std::array<double, 3>{});
+    float tau_max = std::fabs(out.waist_nm);
 
     for (int i = 0; i < kJointCount; ++i)
     {
-        tau_max = std::fmax(tau_max, std::fabs(arm.joint(i).output));
+        tau_max = std::fmax(tau_max, std::fabs(out.joint_nm[i]));
     }
-    std::printf("t=%5.2f  %-9s  q=[%7.2f %7.2f %7.2f %7.2f %7.2f %7.2f %7.2f]  "
-                "tcp=[%6.3f %6.3f %6.3f]  |tau|max=%6.3f  warn=%d\n",
-                world.time(), ToString(arm.state()),
-                obs.joint_deg[0], obs.joint_deg[1], obs.joint_deg[2], obs.joint_deg[3],
-                obs.joint_deg[4], obs.joint_deg[5], obs.joint_deg[6],
-                tcp[0], tcp[1], tcp[2], tau_max, world.warning_count());
+    std::printf("t=%6.2f  %-9s  waist=%6.2f  q=[%7.2f %7.2f %7.2f %7.2f %7.2f %7.2f %7.2f]  "
+                "grip=%5.1f mm  tcp=[%6.3f %6.3f %6.3f]  |tau|max=%6.3f  warn=%d\n",
+                world.time(), ToString(arm.state()), obs.waist.deg,
+                obs.joint.deg[0], obs.joint.deg[1], obs.joint.deg[2], obs.joint.deg[3],
+                obs.joint.deg[4], obs.joint.deg[5], obs.joint.deg[6],
+                obs.gripper.m * 1000.0f, tcp[0], tcp[1], tcp[2], tau_max, world.warning_count());
 }
 
 void PrintUsage(const char *prog)
 {
-    std::printf("用法: %s [模型.xml] [秒数] [--fast] [--host]\n"
+    std::printf("用法: %s [模型.xml] [秒数] [--fast] [--host] [--no-viewer]\n"
                 "  默认模型 %s\n"
-                "  --fast  不按实时节拍 sleep\n"
-                "  --host  开伪串口 %s 等 Host/armhost 连接，由上位机给目标，Ctrl-C 退出\n",
+                "  秒数         不给就一直跑，Ctrl-C 或关窗口退出\n"
+                "  --fast       不按实时节拍 sleep\n"
+                "  --host       开伪串口 %s 等 Host/armhost 连接，由上位机给主臂目标\n"
+                "  --no-viewer  不开 MuJoCo 窗口\n",
                 prog, ARMSIM_DEFAULT_XML, kHostLinkPath);
 }
 
@@ -191,10 +254,10 @@ void PrintUsage(const char *prog)
 int main(int argc, char **argv)
 {
     const char *xml_path = ARMSIM_DEFAULT_XML;
-    double duration_s = kDefaultDurationS;
+    double duration_s = std::numeric_limits<double>::infinity();
     bool realtime = true;
     bool host_mode = false;
-    bool duration_given = false;
+    bool use_viewer = true;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i)
@@ -206,6 +269,10 @@ int main(int argc, char **argv)
         else if (std::strcmp(argv[i], "--host") == 0)
         {
             host_mode = true;
+        }
+        else if (std::strcmp(argv[i], "--no-viewer") == 0)
+        {
+            use_viewer = false;
         }
         else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0 || positional >= 2)
         {
@@ -219,16 +286,11 @@ int main(int argc, char **argv)
         else
         {
             duration_s = std::atof(argv[i]);
-            duration_given = true;
         }
     }
     if (host_mode)
     {
         realtime = true;   // 上位机是真实时间，仿真不能跑快
-        if (!duration_given)
-        {
-            duration_s = 1.0e9;   // 交互用，没指定时长就一直跑
-        }
     }
 
     std::signal(SIGINT, OnSignal);
@@ -242,10 +304,9 @@ int main(int argc, char **argv)
         world_config.joint_armature = kJointArmature;
         world_config.joint_damping = kJointDamping;
         world_config.joint_frictionloss = kJointFrictionLoss;
-        world_config.torque_limit_nm = kTorqueLimitNm;
 
         MujocoWorld world(world_config);
-        Arm arm(world, MakeArmConfig());
+        Arm arm(world, MakeArmConfig(world));
 
         std::unique_ptr<HostLink> link;
         std::unique_ptr<Host> host;
@@ -253,11 +314,32 @@ int main(int argc, char **argv)
         {
             link = std::make_unique<HostLink>(kHostLinkPath);
             host = std::make_unique<Host>(arm, *link, kHostStateDivider);
-            /* 进入 HOST 时没有任何关节闭环，只有重力前馈托着，等上位机发 SET_HOST_TARGET */
+            /* 进入 HOST 时主臂没有任何关节闭环，只有重力前馈托着，等上位机发 SET_HOST_TARGET；
+             * 腰部和夹爪由 Arm 自己保持 */
             arm.SetState(Arm::State::Host);
             std::printf("[system] host link: %s -> %s  (921600 8N1，Host/armhost 直接连这个口)\n",
                         link->link_path().c_str(), link->device_path().c_str());
         }
+
+#ifdef ARMSIM_HAS_VIEWER
+        std::unique_ptr<Viewer> viewer;
+        if (use_viewer)
+        {
+            try
+            {
+                viewer = std::make_unique<Viewer>(world);
+            }
+            catch (const std::exception &e)
+            {
+                std::fprintf(stderr, "[system] 窗口打不开，改为无窗口运行: %s\n", e.what());
+            }
+        }
+#else
+        if (use_viewer)
+        {
+            std::printf("[system] 这个构建没有 simulate / GLFW，无窗口运行（apt install libglfw3-dev 后重新构建）\n");
+        }
+#endif
 
         const double dt = world.timestep();
         if (dt <= 0.0)
@@ -269,53 +351,85 @@ int main(int argc, char **argv)
         {
             std::printf("[system] 注意: MJCF timestep=%.6f s, 控制周期=%.6f s\n", dt, kControlPeriodS);
         }
-        std::printf("[system] model=%s, %d joints, dt=%.4f s\n", xml_path, world.joint_count(), dt);
-        if (!host_mode)
-        {
-            std::printf("[system] 0.2 s ENABLE, 0.5 s HOST + J1 20 deg, 3.5 s back to 0\n");
-        }
+        std::printf("[system] model=%s, dt=%.4f s, Ctrl-C 退出\n", xml_path, dt);
 
-        /* 步进仿真：输入 -> 臂控制 -> 上位机收发 -> 物理步进 */
-        const auto wall_start = std::chrono::steady_clock::now();
-        size_t next_event = 0;
-        int step = 0;
+        /* 步进仿真：输入 -> 臂控制 -> 上位机收发 -> 物理步进 -> 监视输出。
+         * 有窗口时这个循环跑在副线程，窗口占主线程；推进物理期间持有查看器的锁，睡眠时放开 */
+        auto simulate = [&]() {
+            const auto wall_start = std::chrono::steady_clock::now();
+            size_t next_event = 0;
+            int step = 0;
 
-        while (world.time() < duration_s && !g_stop)
-        {
-            const double now = world.time();
-
-            if (!host_mode)   // 目标来自上位机时不跑脚本
+            while (world.time() < duration_s && !g_stop)
             {
-                while (next_event < sizeof(kInputEvents) / sizeof(kInputEvents[0]) &&
-                       now >= kInputEvents[next_event].time_s)
+#ifdef ARMSIM_HAS_VIEWER
+                if (viewer && viewer->closed())
                 {
-                    kInputEvents[next_event++].run(arm, now);
+                    break;
+                }
+                std::unique_lock<std::recursive_mutex> lock;
+                if (viewer)
+                {
+                    lock = viewer->Lock();
+                }
+#endif
+                const double now = world.time();
+
+                if (!host_mode)   // 目标来自上位机时不跑脚本
+                {
+                    while (next_event < sizeof(kInputEvents) / sizeof(kInputEvents[0]) &&
+                           now >= kInputEvents[next_event].time_s)
+                    {
+                        kInputEvents[next_event++].run(arm, now);
+                    }
+                }
+
+                arm.Step();
+
+                if (host)
+                {
+                    /* 链路超时按墙钟算：--fast 下仿真时间比真实时间快，不能用来判掉线 */
+                    const auto elapsed = std::chrono::steady_clock::now() - wall_start;
+                    host->Step(now, static_cast<uint32_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
+                }
+
+                world.Step();
+
+                if (!host_mode && step % kMonitorEverySteps == 0)   // 状态由上位机看，终端不刷屏
+                {
+                    PrintStatus(world, arm);
+                }
+                ++step;
+
+#ifdef ARMSIM_HAS_VIEWER
+                if (viewer && step % kSyncEverySteps == 0)
+                {
+                    viewer->Sync();
+                }
+                if (lock.owns_lock())
+                {
+                    lock.unlock();
+                }
+#endif
+
+                if (realtime)
+                {
+                    std::this_thread::sleep_until(wall_start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                                   std::chrono::duration<double>(world.time())));
                 }
             }
+        };
 
-            arm.Step();
-
-            if (host)
-            {
-                /* 链路超时按墙钟算：--fast 下仿真时间比真实时间快，不能用来判掉线 */
-                const auto elapsed = std::chrono::steady_clock::now() - wall_start;
-                host->Step(now, static_cast<uint32_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
-            }
-
-            world.Step();
-
-            if (!host_mode && step % kMonitorEverySteps == 0)   // 状态由上位机看，终端不刷屏
-            {
-                PrintStatus(world, arm);
-            }
-            ++step;
-
-            if (realtime)
-            {
-                std::this_thread::sleep_until(wall_start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                                               std::chrono::duration<double>(world.time())));
-            }
+#ifdef ARMSIM_HAS_VIEWER
+        if (viewer)
+        {
+            viewer->Run(simulate);
+        }
+        else
+#endif
+        {
+            simulate();
         }
 
         std::printf("[system] done: t=%.2f s, steps=%u, warnings=%d\n",

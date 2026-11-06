@@ -150,6 +150,12 @@ class MonitorController:
             return None
         return b.read_limits()
 
+    def read_dh(self):
+        b = self.backend
+        if b is None or not hasattr(b, "read_dh"):
+            return None
+        return b.read_dh()
+
     def set_host_target(self, joint: int, target_deg: float, closed_loop: bool = False):
         b = self.backend
         if b is None or not hasattr(b, "set_host_target"):
@@ -173,6 +179,35 @@ class MonitorController:
         def done(f):
             e = f.exception()
             self._push("host_target", "全部关节已退出闭环" if e is None else f"退出闭环失败：{e}")
+        fut.add_done_callback(done)
+        return fut
+
+    def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
+                      pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
+                      cost_weights: tuple[float, ...] | None = None):
+        b = self.backend
+        if b is None or not hasattr(b, "set_ik_target"):
+            self._push("warn", "当前数据源不支持 IK 闭环")
+            return None
+        fut = b.set_ik_target(branch, x, y, z, roll, pitch, yaw, psi_deg,
+                              auto_psi, cost_weights)
+
+        def done(f):
+            e = f.exception()
+            self._push("ik_target", "IK 目标已确认" if e is None else f"IK 目标失败：{e}")
+        fut.add_done_callback(done)
+        return fut
+
+    def stop_ik(self):
+        b = self.backend
+        if b is None or not hasattr(b, "stop_ik"):
+            self._push("warn", "当前数据源不支持 IK 闭环")
+            return None
+        fut = b.stop_ik()
+
+        def done(f):
+            e = f.exception()
+            self._push("ik_target", "已退出 IK 闭环" if e is None else f"退出 IK 失败：{e}")
         fut.add_done_callback(done)
         return fut
 

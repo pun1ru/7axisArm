@@ -7,14 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from armhost.protocol import (MAX_PAYLOAD, Ack, AckResult, ArmState, CanBusStatus, ClearTorque,  # noqa: E402
-                              DecodeError, DeviceInfo, Estop, EstopAction, Event, EventCode,
-                              FrameParser, Heartbeat, JointFlag, JointRecord, JointState,
-                              MotorStatus, MsgType, ParamRead, ParamValue, ParamWrite, RawMessage,
-                              SetHostTarget, SetJointTorque, StatusFlag, SystemStatus, TorqueItem,
-                              decode_frame, decode_payload, encode_frame)
+from armhost.protocol import (MAX_PAYLOAD, Ack, AckResult, ArmPosture, ArmState, CanBusStatus,  # noqa: E402
+                              ClearTorque, DecodeError, DeviceInfo, Estop, EstopAction, Event,
+                              EventCode, FrameParser, Heartbeat, JointFlag, JointRecord, JointState,
+                              MotorStatus, MsgType, ParamRead, ParamValue, ParamWrite, PostureFlag,
+                              RawMessage, SetHostTarget, SetIkTarget, SetJointTorque, StatusFlag,
+                              SystemStatus, TorqueItem, decode_frame, decode_payload, encode_frame)
 from armhost.protocol.crc import crc8, crc16  # noqa: E402
-from armhost.protocol.enums import HostTargetAction, ParamType  # noqa: E402
+from armhost.protocol.enums import HostIkAction, HostTargetAction, ParamType  # noqa: E402
 
 
 def sample_joint_state(n=7):
@@ -160,8 +160,14 @@ class TestMessages(unittest.TestCase):
                   SystemStatus(1, 2, ArmState.ENABLE, 0, 3, 3, StatusFlag.RC_ONLINE, 1, 2, 3, 4,
                                [0, 1, 2], [CanBusStatus(1, 2, 3, 4, 5)] * 3),
                   Event(1, EventCode.MOTOR_FAULT, 2, 3, -4),
+                  ArmPosture(5, PostureFlag.VALID | PostureFlag.IK_ACTIVE, 12.5,
+                             0.125, -0.25, 0.375, 4.5, 5.5, 6.5),
                   SetJointTorque(100, [TorqueItem(0, 1.5), TorqueItem(6, -0.5)]),
-                  SetHostTarget(3, HostTargetAction.SET_CLOSED, 12.5),
+                  SetHostTarget(3, HostTargetAction.SET_CLOSED, 470.5, True),
+                  SetIkTarget(HostIkAction.SET, 5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5, 12.5),
+                  SetIkTarget(HostIkAction.SET, 5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5, 12.5,
+                              True, (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)),
+                  SetIkTarget(HostIkAction.STOP),
                   ClearTorque(0x7F), Estop(EstopAction.LATCH), Estop(EstopAction.RELEASE),
                   ParamRead(0x200, 3), ParamWrite(0x200, 3, ParamType.F32, 1.5),
                   ParamWrite(0x0001, 0, ParamType.U16, 200),
@@ -170,16 +176,58 @@ class TestMessages(unittest.TestCase):
                 self.roundtrip(m)
 
     def test_host_target_is_single_joint_8_bytes(self):
-        p = SetHostTarget(3, HostTargetAction.SET_CLOSED, 12.5).encode()
+        p = SetHostTarget(3, HostTargetAction.SET_CLOSED, 470.5, True).encode()
         self.assertEqual(len(p), 8)
+        self.assertEqual(p, struct.pack("<BBHf", 3, 1, 1, 470.5))
         m = decode_payload(MsgType.SET_HOST_TARGET, p)
-        self.assertEqual((m.joint, m.action, m.target_deg), (3, HostTargetAction.SET_CLOSED, 12.5))
+        self.assertEqual((m.joint, m.action, m.target_deg, m.multi_turn),
+                         (3, HostTargetAction.SET_CLOSED, 470.5, True))
+        legacy = decode_payload(MsgType.SET_HOST_TARGET,
+                                struct.pack("<BBHf", 3, 1, 0, 12.5))
+        self.assertFalse(legacy.multi_turn)
+        self.assertEqual(legacy.target_deg, 12.5)
         self.assertEqual(SetHostTarget(0, HostTargetAction.STOP_ALL, 0.0).encode(),
                          struct.pack("<BBHf", 0, 2, 0, 0.0))
         with self.assertRaises(ValueError):
             SetHostTarget(7, HostTargetAction.SET_OPEN, 0.0).encode()
         with self.assertRaises(DecodeError):
             decode_payload(MsgType.SET_HOST_TARGET, bytes(7))
+
+    def test_ik_target_and_posture_layout(self):
+        command = SetIkTarget(HostIkAction.SET, 5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5, 12.5)
+        payload = command.encode()
+        self.assertEqual(len(payload), 64)
+        self.assertEqual(decode_payload(MsgType.SET_IK_TARGET, payload), command)
+        with self.assertRaises(ValueError):
+            SetIkTarget(HostIkAction.SET, 8).encode()
+
+        posture = ArmPosture(5, PostureFlag.VALID | PostureFlag.IK_ACTIVE, 12.5,
+                             0.125, -0.25, 0.375, 4.5, 5.5, 6.5)
+        payload = posture.encode()
+        self.assertEqual(len(payload), 32)
+        got = decode_payload(MsgType.ARM_POSTURE, payload)
+        self.assertEqual(got, posture)
+        self.assertTrue(got.valid)
+        self.assertTrue(got.ik_active)
+
+    def test_ik_target_auto_psi_and_legacy_payload(self):
+        weights = (1.0, 0.5, 2.0, 0.0, 3.0, 1.5, 4.0)
+        command = SetIkTarget(HostIkAction.SET, 3, 0.125, -0.25, 0.375, 4.0, 5.0, 6.0, 0.0,
+                              True, weights)
+        payload = command.encode()
+        self.assertEqual(len(payload), 64)
+        self.assertEqual(decode_payload(MsgType.SET_IK_TARGET, payload), command)
+
+        legacy = struct.pack("<BBH7f", int(HostIkAction.SET), 3, 0,
+                             0.125, -0.25, 0.375, 4.0, 5.0, 6.0, 7.0)
+        got = decode_payload(MsgType.SET_IK_TARGET, legacy)
+        self.assertFalse(got.auto_psi)
+        self.assertEqual(got.cost_weights, (1.0,) * 7)
+        self.assertEqual(got.psi_deg, 7.0)
+
+        with self.assertRaises(ValueError):
+            SetIkTarget(HostIkAction.SET, 0, auto_psi=True,
+                        cost_weights=(0.0,) * 7).encode()
 
     def test_short_payload_raises(self):
         with self.assertRaises(DecodeError):

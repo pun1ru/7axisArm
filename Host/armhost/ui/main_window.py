@@ -17,6 +17,7 @@ from ..model.sim import SimBackend
 from . import theme
 from .gravity_panel import GravityFitPanel
 from .host_panel import HostPanel
+from .ik_panel import IkPanel
 from .joint_table import JointTable
 from .layout_util import scrollable
 from .panels import HexPanel, LogView, RecordPanel, StatsTable
@@ -94,7 +95,8 @@ class MonitorWindow(QMainWindow):
         i = self.scope.win_combo.findData(int(self.cfg["ui"]["default_window_s"]))
         if i >= 0:
             self.scope.win_combo.setCurrentIndex(i)
-        self.pose = PosePanel(self.ctrl.latest, self._read_device_dh, fps=int(self.cfg["ui"]["view3d_fps"]))
+        self.pose = PosePanel(self.ctrl.latest, self._read_device_dh, fps=int(self.cfg["ui"]["view3d_fps"]),
+                              read_device_limits=self.ctrl.read_limits)
         self.center_tabs = QTabWidget()
         self.center_tabs.addTab(self.scope, "实时波形")
         self.center_tabs.addTab(self.pose, "三维姿态")
@@ -116,9 +118,13 @@ class MonitorWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
         self.host = HostPanel(self.ctrl, joint_count)
+        self.ik = IkPanel(self.ctrl)
+        host_tabs = QTabWidget()
+        host_tabs.addTab(scrollable(self.host), "关节角闭环")
+        host_tabs.addTab(scrollable(self.ik), "IK 闭环")
         host_dock = QDockWidget("Host 目标", self)
         host_dock.setObjectName("host_dock")
-        host_dock.setWidget(scrollable(self.host))
+        host_dock.setWidget(host_tabs)
         host_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, host_dock)
         self.splitDockWidget(dock, host_dock, Qt.Vertical)
@@ -255,9 +261,11 @@ class MonitorWindow(QMainWindow):
             self.src.setCurrentIndex(self.src.findData(src))
             self.src.blockSignals(False)
         self.record.set_replay_active(replay)
-        self.host.set_connected(backend is not None and hasattr(backend, "set_host_target")
-                                and hasattr(backend, "stop_host_loops")
-                                and hasattr(backend, "read_limits"))
+        host_supported = backend is not None and hasattr(backend, "set_host_target") \
+            and hasattr(backend, "stop_host_loops") and hasattr(backend, "read_limits")
+        ik_supported = host_supported and hasattr(backend, "set_ik_target") and hasattr(backend, "stop_ik")
+        self.host.set_connected(host_supported)
+        self.ik.set_connected(host_supported, ik_supported)
         if backend is None:
             self.src.setEnabled(True)
             self._on_src()
@@ -312,6 +320,7 @@ class MonitorWindow(QMainWindow):
         s = self.ctrl.latest()
         self.table.update_sample(s)
         self.host.tick(s)
+        self.ik.tick(s)
         st = self.ctrl.status()
         view = self.ctrl.buffer.view(3.0)
         timing = timing_stats(view)

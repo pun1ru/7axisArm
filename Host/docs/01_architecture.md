@@ -11,9 +11,9 @@
 | 语言 / 框架：Python + PySide6 + pyqtgraph + PySerial | README |
 | 跨 Windows / Linux | README |
 | 关节数 7（J0~J6） | `arm.h` `ARM_JOINT_COUNT 7U` |
-| 关节角单位 deg，口径 (-180, 180]，方向已按 `direction` 折算 | `ArmObserver_t.joint_deg` |
+| 关节角单位 deg，多圈口径，方向已按 `direction` 折算 | `ArmObserver_t.joint_deg` |
 | 电机反馈有角速度 rad/s、力矩 N·m、温度、状态码、错误码 | `Feedback_t` |
-| DH 为改进 DH，7 行 `{alpha_deg, a_m, d_m, theta_offset_deg}` | `module_init.c` |
+| DH 为改进 DH，7 行 `{alpha_deg, a_m, d_m, theta_offset_deg}` | 当前模型 `Simulation/ArmSim/main.cpp` `MakeArmConfig()`；旧固件 `module_init.c` 仅用于重力对照 |
 | 控制任务周期 2 ms（500 Hz） | `TASK_ARM_PERIOD_MS 2U` |
 | 机械臂状态机 PROTECTED / ENABLE / FEEDBACK / MASTER（主机角色） | `ArmState_t` |
 | 力矩真正经 CAN 下发由单片机按遥控状态决定，上位机只"设置" | README #2 |

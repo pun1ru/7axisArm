@@ -77,7 +77,9 @@ class SerialBackend(RobotBackend):
         self.link = ArmLink(transport)
         self.label = label or transport.config.port
         self._clock = McuClock()
+        self._posture = None
         self.link.subscribe(MsgType.JOINT_STATE, self._on_state)
+        self.link.subscribe(MsgType.ARM_POSTURE, self._on_posture)
         self.link.subscribe(MsgType.SYSTEM_STATUS, lambda r: self._emit_event("system", r.msg))
         self.link.subscribe(MsgType.EVENT, lambda r: self._emit_event("event", r.msg))
         self.link.add_link_listener(self._on_link)
@@ -90,11 +92,16 @@ class SerialBackend(RobotBackend):
     def _on_state(self, r) -> None:
         m: JointState = r.msg
         self._emit_sample(RobotSample(self._clock.unwrap(m.mcu_time_us), r.host_time_ns, r.frame.seq,
-                                      m.arm_state, m.status_flags, m.host_cmd_age_ms, tuple(m.joints)))
+                                      m.arm_state, m.status_flags, m.host_cmd_age_ms, tuple(m.joints),
+                                      self._posture))
+
+    def _on_posture(self, r) -> None:
+        self._posture = r.msg
 
     def _on_link(self, alive: bool) -> None:
         if not alive:
             self._clock.reset()
+            self._posture = None
         self._emit_event("link", alive)
         if alive:   # 每次链路恢复都重新握手，取关节数与版本
             fut = self.link.request_device_info()
@@ -114,6 +121,15 @@ class SerialBackend(RobotBackend):
 
     def stop_host_loops(self) -> Future:
         return self.link.stop_host_loops()
+
+    def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
+                      pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
+                      cost_weights: tuple[float, ...] | None = None) -> Future:
+        return self.link.set_ik_target(branch, x, y, z, roll, pitch, yaw, psi_deg,
+                                       auto_psi, cost_weights)
+
+    def stop_ik(self) -> Future:
+        return self.link.stop_ik()
 
     def _read_param_series(self, requests: list[tuple[int, int]]) -> Future:
         """Read parameters sequentially to avoid overflowing the MCU reply queue."""

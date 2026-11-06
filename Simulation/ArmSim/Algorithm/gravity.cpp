@@ -2,9 +2,10 @@
 
 #include <cmath>
 
-/* tau_j = g * sum_{i>=j} sz^T * T_{j-1} * dA_j * A_{j+1}...A_i * pi_i
- * 只用结果的第 3 行，而 row2(M * A) = row2(M) * A，所以只递推一个 1x4 行向量 v：
- *     v0 = row2(T_{j-1}) * dA_j,  v = v * A_i (i = j+1..6),  tau_j += g * (v . pi_i)
+/* U = g * sum_i row2(T_i) . p_i，T_i = A_0 A_1 ... A_i，p_i = [m*cx m*cy m*cz m]
+ * tau_j = dU/dq_j = g * sum_{i>=j} row2(T_{j-1}) * dA_j * A_{j+1}...A_i . p_i
+ * 只用 T 的第 3 行（世界 z），所以只递推一个 1x4 行向量 v：
+ *     v0 = row2(T_{j-1}) * dA_j,  v = v * A_i (i = j+1..),  tau_j += g * (v . p_i)
  * dA_j 由 A_j 直接得到：前两列互换并取负，后两列与 q 无关。 */
 
 namespace {
@@ -31,64 +32,72 @@ Row RowMulDA(const Row &row, const Mat4 &A)
 
 }  // namespace
 
-JointArray GravityModel::ModelTorque(const JointArray &q_deg) const
+GravityModel::Dof GravityModel::ModelTorque(const Dof &q_deg) const
 {
-    std::array<Mat4, kJointCount> A;            // A[k] = T_{k,k+1}
-    std::array<Row, kJointCount + 1> row2;      // row2[k] = T_{0..k-1} 的第 3 行
-    JointArray tau{};
+    std::array<Mat4, kDof> A;
+    std::array<Row, kDof + 1> row2;   // row2[k] = T_{0..k-1} 的第 3 行
+    Dof tau{};
     const float g = param_.g > 0.0f ? param_.g : kDefaultG;
 
-    for (int k = 0; k < kJointCount; ++k)
+    /* 腰部：安装位姿 * Rz(q0)；其余关节是 DH 行 */
+    A[0] = mount_ * DhTransform(DhParam{0.0f, 0.0f, 0.0f, 0.0f}, q_deg[0]);
+    for (int k = 1; k < kDof; ++k)
     {
-        A[k] = DhTransform(dh_[k], q_deg[k]);
+        A[k] = DhTransform(dh_[k - 1], q_deg[k]);
     }
     row2[0] = {0.0f, 0.0f, 1.0f, 0.0f};
-    for (int k = 0; k < kJointCount; ++k)
+    for (int k = 0; k < kDof; ++k)
     {
         row2[k + 1] = RowMulMat(row2[k], A[k]);
     }
 
-    for (int j = 0; j < kJointCount; ++j)
+    for (int j = 0; j < kDof; ++j)
     {
         Row v = RowMulDA(row2[j], A[j]);
         float sum = 0.0f;
 
-        for (int i = j; i < kJointCount; ++i)
+        for (int i = j; i < kDof; ++i)
         {
+            const LinkInertia &link = param_.link[i];
+            const float m = link.mass_kg;
+
             if (i > j)
             {
                 v = RowMulMat(v, A[i]);
             }
-            /* beta 只含连杆 1..6，每连杆 2 个：hx、hy */
-            if (i >= 1)
-            {
-                sum += v[0] * param_.beta[2 * (i - 1)] + v[1] * param_.beta[2 * (i - 1) + 1];
-            }
+            sum += v[0] * m * link.com_m[0] + v[1] * m * link.com_m[1] +
+                   v[2] * m * link.com_m[2] + v[3] * m;
         }
         tau[j] = g * sum;
     }
     return tau;
 }
 
-JointArray GravityModel::Compute(const JointArray &q_deg) const
+GravityModel::Dof GravityModel::Compute(float waist_deg, const JointArray &q_deg) const
 {
-    JointArray cmd{};
+    Dof q;
+    Dof cmd{};
     const float sign = param_.sign < 0 ? -1.0f : 1.0f;
 
     if (!param_.enable)
     {
         return cmd;
     }
-    for (float q : q_deg)
+    q[0] = waist_deg;
+    for (int i = 0; i < kJointCount; ++i)
     {
-        if (!std::isfinite(q))
+        q[i + 1] = q_deg[i];
+    }
+    for (float v : q)
+    {
+        if (!std::isfinite(v))
         {
             return cmd;
         }
     }
 
-    const JointArray model = ModelTorque(q_deg);
-    for (int i = 0; i < kJointCount; ++i)
+    const Dof model = ModelTorque(q);
+    for (int i = 0; i < kDof; ++i)
     {
         const float tau = sign * model[i];
 

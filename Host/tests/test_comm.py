@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from armhost.comm import (AckTimeoutError, ArmLink, CommandRejected, FaultConfig,  # noqa: E402
                           LinkLostError, LinkState, McuClock, SeqTracker, SimDevice,
                           make_mock_transport)
-from armhost.protocol import AckResult, ArmState, JointFlag, MsgType, StatusFlag  # noqa: E402
+from armhost.protocol import (AckResult, ArmState, JointFlag, MsgType, PostureFlag,  # noqa: E402
+                              SetHostTarget, StatusFlag)
 
 
 def wait_until(pred, timeout=2.0):
@@ -126,13 +127,15 @@ class TestLink(LinkCase):
                 self.assertEqual(self.link.read_param(pid, 2).result(1.0).value, before.value)
 
     def test_host_target_updates_one_joint_and_loop_mask(self):
-        self.dev.limit[0x0102] = [-90.0, -95.0, -180.0, -120.0, -180.0, -60.0, -180.0]
-        self.dev.limit[0x0103] = [90.0, 100.0, 180.0, 0.0, 180.0, 90.0, 180.0]
+        self.dev.limit[0x0102] = [-90.0, -20.0, -175.0, -110.0, -175.0, -120.0, -175.0]
+        self.dev.limit[0x0103] = [90.0, 175.0, 175.0, 110.0, 175.0, 70.0, 175.0]
         with self.assertRaises(CommandRejected):
             self.link.set_host_target(0, 10.0, True).result(1.0)   # still ENABLE
         self.dev.arm_state = ArmState.HOST
         ack = self.link.set_host_target(0, 10.0, True).result(1.0)
         self.assertEqual(ack.result, AckResult.OK)
+        sent = [m for m in self.dev.received if isinstance(m, SetHostTarget)][-1]
+        self.assertTrue(sent.multi_turn)
         self.assertEqual(self.dev.host_closed_loop_mask, 1 << 0)
         self.assertEqual(self.dev.joints[0].host_target, 10.0)
 
@@ -153,6 +156,31 @@ class TestLink(LinkCase):
         self.assertTrue(wait_until(
             lambda: not (self.link.mirror.snapshot().arm.joint_flags[1]
                          & JointFlag.HOST_CLOSED_LOOP)))
+
+    def test_ik_target_enters_and_leaves_host_ik(self):
+        self.dev.arm_state = ArmState.HOST
+        weights = (1.0, 2.0, 1.0, 0.5, 1.0, 3.0, 1.0)
+        ack = self.link.set_ik_target(5, 0.1, -0.2, 0.3, 4.0, 5.0, 6.0, 12.5,
+                                      True, weights).result(1.0)
+        self.assertEqual(ack.result, AckResult.OK)
+        self.assertEqual(self.dev.arm_state, ArmState.HOST_IK)
+        self.assertEqual(self.dev.host_closed_loop_mask, (1 << self.dev.n) - 1)
+        self.assertEqual(self.dev.ik_branch, 5)
+        self.assertAlmostEqual(self.dev.ik_psi_deg, 12.5)
+        self.assertTrue(self.dev.ik_auto_psi)
+        self.assertEqual(self.dev.ik_cost_weights, weights)
+        self.assertTrue(wait_until(
+            lambda: self.link.mirror.snapshot().arm.state == ArmState.HOST_IK))
+        self.assertTrue(wait_until(
+            lambda: self.link.mirror.snapshot().posture is not None
+            and self.link.mirror.snapshot().posture.branch == 5))
+        self.assertTrue(wait_until(
+            lambda: self.link.mirror.snapshot().posture is not None
+            and PostureFlag.AUTO_PSI in PostureFlag(self.link.mirror.snapshot().posture.flags)))
+
+        self.assertEqual(self.link.stop_ik().result(1.0).result, AckResult.OK)
+        self.assertEqual(self.dev.arm_state, ArmState.HOST)
+        self.assertEqual(self.dev.host_closed_loop_mask, 0)
 
     def test_ack_timeout_and_retry(self):
         self.dev.ignore_types = {MsgType.PARAM_READ}

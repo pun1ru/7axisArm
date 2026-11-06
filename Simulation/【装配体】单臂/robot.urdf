@@ -947,49 +947,49 @@
     <parent link="link1" />
     <child link="link2" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-1.570796327" upper="1.570796327" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint3" type="revolute">
     <origin xyz="-4.516084733e-11 4.377060424e-10 0" rpy="1.570796327 1.570796327 0" />
     <parent link="link2" />
     <child link="link3" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-0.3490658504" upper="3.054326191" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint4" type="revolute">
     <origin xyz="0 -0.1880000003 0" rpy="1.570796327 1.570796327 0" />
     <parent link="link3" />
     <child link="link4" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-3.054326191" upper="3.054326191" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint5" type="revolute">
     <origin xyz="-3.963416205e-10 0.0025 0" rpy="-1.570796327 -0.1613780467 3.141592654" />
     <parent link="link4" />
     <child link="link5" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-1.919862177" upper="1.919862177" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint6" type="revolute">
     <origin xyz="-8.928974574e-11 -0.2069999997 0" rpy="1.570796327 -0.1866627708 0" />
     <parent link="link5" />
     <child link="link6" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-3.054326191" upper="3.054326191" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint7" type="revolute">
     <origin xyz="-5.069724573e-09 -4.239384809e-09 0" rpy="-1.570796327 0.5435200631 3.141592654" />
     <parent link="link6" />
     <child link="link7" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-2.094395102" upper="1.221730476" effort="100" velocity="3.14159" />
   </joint>
   <joint name="joint8" type="revolute">
     <origin xyz="4.533674991e-10 0 0" rpy="1.570796327 0 0" />
     <parent link="link7" />
     <child link="link8" />
     <axis xyz="0 0 1" />
-    <limit lower="-3.14159" upper="3.14159" effort="100" velocity="3.14159" />
+    <limit lower="-3.054326191" upper="3.054326191" effort="100" velocity="3.14159" />
   </joint>
   <joint name="gripper_finger1_joint" type="prismatic">
     <origin xyz="5.898575179e-05 -0.02111823484 0.1412926713" rpy="-1.474663468 0.01544078924 -0.1587701295" />

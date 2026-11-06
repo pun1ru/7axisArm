@@ -4,7 +4,10 @@
 
 namespace {
 constexpr float kGimbalLockEps = 1e-6f;   // cos(pitch) 低于此值视为万向节死锁
-}
+
+bool IsZero(float v) { return std::fabs(v) < 1e-6f; }
+bool IsRightAngle(float deg) { return std::fabs(std::fabs(deg) - 90.0f) < 1e-3f; }
+}  // namespace
 
 Mat4 Mat4::Identity()
 {
@@ -33,6 +36,20 @@ Mat4 Mat4::operator*(const Mat4 &B) const
     return out;
 }
 
+Mat4 TransformFromXyzRpy(const std::array<float, 3> &xyz_m, const std::array<float, 3> &rpy_rad)
+{
+    const float cr = std::cos(rpy_rad[0]), sr = std::sin(rpy_rad[0]);
+    const float cp = std::cos(rpy_rad[1]), sp = std::sin(rpy_rad[1]);
+    const float cy = std::cos(rpy_rad[2]), sy = std::sin(rpy_rad[2]);
+    Mat4 T;
+
+    T.m = {{{cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr, xyz_m[0]},
+            {sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr, xyz_m[1]},
+            {-sp,     cp * sr,                cp * cr,                xyz_m[2]},
+            {0.0f,    0.0f,                   0.0f,                   1.0f}}};
+    return T;
+}
+
 Mat4 DhTransform(const DhParam &p, float q_deg)
 {
     const float theta = (q_deg + p.theta_offset_deg) * kDegToRad;
@@ -48,15 +65,22 @@ Mat4 DhTransform(const DhParam &p, float q_deg)
     return T;
 }
 
-Mat4 ForwardKinematics(const DhTable &table, const JointArray &q_deg)
+FrameArray ForwardKinematicsFrames(const DhTable &table, const JointArray &q_deg)
 {
+    FrameArray frames;
     Mat4 T = Mat4::Identity();
 
     for (int k = 0; k < kJointCount; ++k)
     {
         T = T * DhTransform(table[k], q_deg[k]);
+        frames[k] = T;
     }
-    return T;
+    return frames;
+}
+
+Mat4 ForwardKinematics(const DhTable &table, const JointArray &q_deg)
+{
+    return ForwardKinematicsFrames(table, q_deg).back();
 }
 
 Pose PoseFromTransform(const Mat4 &T)
@@ -83,4 +107,37 @@ Pose PoseFromTransform(const Mat4 &T)
     }
     pose.euler_deg = {roll * kRadToDeg, pitch * kRadToDeg, yaw * kRadToDeg};
     return pose;
+}
+
+/*--------------------------------------S-R-S 构型：臂角与分支--------------------------------------*/
+/* DhTable 的第 k 行是坐标系 k+1 相对 k 的变换，行里的 (alpha, a) 属于上一根连杆，d 和 theta 属于本关节。
+ *   肩：z1、z2、z3 交于坐标系 1 原点 <=> a1 = 0，d2 = 0，a2 = 0，且 z1⊥z2、z2⊥z3
+ *   肘：a3 = a4 = 0，z3⊥z4、z4⊥z5：S→E 和 E→W' 都垂直于肘轴 z4，S-E-W' 才是平面三角形
+ *       （W' 是 W 沿肘轴退回偏置 d4，见 ik.h）
+ *   腕：z5、z6、z7 交于坐标系 5 原点 <=> a5 = 0，d6 = 0，a6 = 0，且 z5⊥z6、z6⊥z7 */
+bool IsSrsStructure(const DhTable &t)
+{
+    const bool shoulder = IsZero(t[1].a_m) && IsZero(t[1].d_m) && IsZero(t[2].a_m) &&
+                          IsRightAngle(t[1].alpha_deg) && IsRightAngle(t[2].alpha_deg);
+    const bool elbow = IsZero(t[3].a_m) && IsZero(t[4].a_m) &&
+                       IsRightAngle(t[3].alpha_deg) && IsRightAngle(t[4].alpha_deg);
+    const bool wrist = IsZero(t[5].a_m) && IsZero(t[5].d_m) && IsZero(t[6].a_m) &&
+                       IsRightAngle(t[5].alpha_deg) && IsRightAngle(t[6].alpha_deg);
+
+    return shoulder && elbow && wrist;
+}
+
+Branch ComputeBranch(const DhTable &table, const JointArray &q_deg)
+{
+    const auto side = [&](int k) -> int8_t {
+        const float theta = (q_deg[k] + table[k].theta_offset_deg) * kDegToRad;
+        return std::sin(theta) >= 0.0f ? 1 : -1;
+    };
+    Branch b;
+
+    b.valid = true;
+    b.shoulder = side(1);   // θ2
+    b.elbow = side(3);      // θ4
+    b.wrist = side(5);      // θ6
+    return b;
 }

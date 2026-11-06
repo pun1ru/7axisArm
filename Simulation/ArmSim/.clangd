@@ -1,0 +1,16 @@
+CompileFlags:
+  # compile_commands.json 在当前 .clangd 同级的 build/ 目录里
+  CompilationDatabase: build
+  # MuJoCo 头文件在 /opt/mujoco/include，compile_commands.json 里已经带了 -I
+  Remove:
+    - -W*            # 少一点构建系统噪音；想保留就删掉这一行
+
+Diagnostics:
+  ClangTidy:
+    Add: []
+    Remove: ['*']
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true

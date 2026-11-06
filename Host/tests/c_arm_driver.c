@@ -107,7 +107,8 @@ int main(void)
             int j, closed;
             float t;
             if (scanf("%d %f %d", &j, &t, &closed) != 3) return 2;
-            printf("host %d\n", (int)Arm_SetHostTarget(&g_arm, (uint8_t)j, t, closed != 0));
+            printf("host %d\n", (int)Arm_SetHostTarget(&g_arm, (uint8_t)j, t, closed != 0,
+                                                     false));
         }
         else if (strcmp(cmd, "stop") == 0)
         {

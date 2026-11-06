@@ -24,7 +24,7 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 字节序 | 全部小端（STM32 原生） |
 | 整数 | 定长 u8/i8/u16/i16/u32/i32，有符号用补码 |
 | 浮点 | IEEE-754 binary32 小端；NaN/Inf 视为 BAD_PARAM |
-| 角度 | deg，(-180, 180]，**关节口径**：已乘 `ArmParam_t.direction` |
+| 角度 | deg，**多圈关节口径**：已乘 `ArmParam_t.direction`；需要单圈绝对角时由上位机自行折算 |
 | 角速度 | deg/s，关节口径 |
 | 力矩 | N·m，关节口径；正方向 = 使关节 +q 增大 |
 | 时间戳 | `mcu_time_us` u32，MCU 采样时刻，µs，约 71.6 min 回绕，上位机展开成 64 位。**上位机接收时间不在帧里**，由上位机自己记 `monotonic_ns` |
@@ -64,10 +64,12 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 0x10 | JOINT_STATE | M→H | 周期，默认 100 Hz | 无 |
 | 0x11 | SYSTEM_STATUS | M→H | 周期，默认 10 Hz | 无 |
 | 0x12 | EVENT | M→H | 事件触发 | 无 |
+| 0x13 | ARM_POSTURE | M→H | 周期 | 无 |
 | 0x20 | SET_JOINT_TORQUE | H→M | ≥ 20 Hz 持续刷新 | ACK（ACK_REQ 置位时） |
 | 0x21 | CLEAR_TORQUE | H→M | 按需 | ACK |
 | 0x22 | ESTOP | H→M | 按需 | ACK |
 | 0x23 | SET_HOST_TARGET | H→M | 按需 | ACK |
+| 0x24 | SET_IK_TARGET | H→M | 按需 | ACK |
 | 0x28 | PARAM_READ | H→M | 按需 | PARAM_VALUE |
 | 0x29 | PARAM_WRITE | H→M | 按需 | PARAM_VALUE |
 | 0x2A | PARAM_VALUE | M→H | 应答 | — |
@@ -109,21 +111,51 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 |---|---|---|---|
 | 0 | u8 | joint | 目标关节 0~6；STOP_ALL 时忽略 |
 | 1 | u8 | action | 0 SET_OPEN：保存目标、该关节不闭环；1 SET_CLOSED：保存目标并闭环；2 STOP_ALL：全部关节退出闭环、目标保留 |
-| 2 | u16 | reserved | 0 |
-| 4 | f32 | target_deg | 该关节单圈绝对目标角，必须位于固件 `ArmJointLimit_t` 内；STOP_ALL 时忽略 |
+| 2 | u8 | flags | bit0=1：`target_deg` 为多圈角；0：兼容旧 Host 的单圈绝对角 |
+| 3 | u8 | reserved | 0 |
+| 4 | f32 | target_deg | 该关节目标角；多圈帧必须位于进入 HOST 时锁存的当前圈限位内，旧单圈帧映射到当前圈；STOP_ALL 时忽略 |
 
-一帧只更新一个关节，未列出的关节保持原目标和原闭环状态。只有 `arm_state == HOST`（左上 + 右下拨杆）时接受 SET_OPEN / SET_CLOSED。固件会再检查一次限位，越界或状态不符回 `BAD_PARAM`；成功回 `ACK`。目标命令不自动重试，链路超过 300 ms 没有有效帧时全部关节自动退出闭环。`STOP_ALL` 是安全命令，任何状态都接受。
+一帧只更新一个关节，未列出的关节保持原目标和原闭环状态。新 Host 始终发送多圈目标；旧 8 B 帧 flags=0 时仍按单圈绝对角兼容。只有 `arm_state == HOST`（左上 + 右下拨杆）时接受 SET_OPEN / SET_CLOSED。固件会再检查一次当前圈多圈限位，越界或状态不符回 `BAD_PARAM`；成功回 `ACK`。目标命令不自动重试，链路超过 300 ms 没有有效帧时全部关节自动退出闭环。`STOP_ALL` 是安全命令，任何状态都接受。
+
+### 0x24 SET_IK_TARGET（64 B；兼容旧 32 B 手动 ψ 帧）
+| 偏移 | 类型 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | u8 | action | 0 SET：进入/更新 HOST_IK；1 STOP：退出 HOST_IK 并清全部上位机闭环 |
+| 1 | u8 | branch | 0~7。bit0 肩 λ2、bit1 肘 λ4、bit2 腕 λ6；置位表示 λ = -1 |
+| 2 | u8 | psi_mode | 0 手动：使用 `psi_deg`；1 自动：在当前分支内按代价选择 ψ |
+| 3 | u8 | reserved | 0 |
+| 4 | f32 × 3 | x / y / z | 末端位置 m，与 ForwardKinematics 同一腰部连杆坐标系 |
+| 16 | f32 × 3 | roll / pitch / yaw | 末端欧拉角 deg，Z-Y-X |
+| 28 | f32 | psi_deg | 臂角 ψ deg |
+| 32 | f32 × 7 | cost_weight | J0~J6 的加权关节位移代价权重，非负且至少一个大于 0 |
+| 60 | u32 | reserved2 | 0 |
+
+SET 从 HOST 进入 HOST_IK，或保持 HOST_IK 更新目标。进入时请求分支必须等于当前观测分支；HOST_IK 期间不能通过命令直接切分支，必须先 STOP、让实际构型进入新分支后再进入。ArmSim 用 S-R-S 解析逆解求出 7 个关节目标并全部投入闭环，关节限位不足或不可达时回 `BAD_PARAM` 且保留原目标。链路超时同样自动退出闭环。
+
+自动 ψ 模式在 `[-180°, 180°]` 内以 2° 为步长采样，并额外保留当前 ψ 作为候选；只保留逆解成功、肩/腕非奇异（`|sinθ2|`、`|sinθ6| ≥ 0.02`）且映射到当前圈后满足关节限位的点。代价为
+`Σ cost_weight[i] · (q_i - q_prev_i)²`，其中 `q_i` 是映射后的多圈关节目标，`q_prev_i` 是本次更新前已锁存的多圈关节目标，差值不做环绕。选择代价最小的 ψ，
+并继续使用当前分支。旧 32 B 帧按手动 ψ、权重全 1 处理。
+
+### 0x13 ARM_POSTURE（32 B）
+| 偏移 | 类型 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | u8 | branch | 当前分支 0~7；0xFF 无效 |
+| 1 | u8 | flags | bit0 ψ 有效，bit1 肩奇异，bit2 腕奇异，bit3 IK 闭环中，bit4~5 最近一次 IK 状态（0 OK / 1 不可达 / 2 参考平面退化），bit6 当前使用自动 ψ |
+| 2 | u16 | reserved | 0 |
+| 4 | f32 | psi_deg | 当前臂角 ψ |
+| 8 | f32 × 3 | x / y / z | 当前末端位置 m |
+| 20 | f32 × 3 | roll / pitch / yaw | 当前末端欧拉角 deg |
 
 ### 0x10 JOINT_STATE（12 + N×28 B，N=7 时 208 B，整帧 219 B）
 | 偏移 | 类型 | 字段 | 说明 |
 |---|---|---|---|
 | 0 | u32 | mcu_time_us | 本次观测的采样时刻 |
-| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT 6 HOST |
+| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT 6 HOST 7 HOST_IK |
 | 5 | u8 | joint_count | N |
 | 6 | u8 | record_size | 每条关节记录的字节数，v1.0 = 28；接收方按它步进，兼容以后加长 |
 | 7 | u8 | reserved | 0 |
 | 8 | u16 | status_flags | bit0 RC_ONLINE，bit1 HOST_LINK_OK，bit2 ESTOP_LATCHED，bit3 HOST_TORQUE_ACTIVE，bit4 CTRL_ALIGN_PENDING，bit5 HOST_CLOSED_LOOP |
-| 10 | u16 | host_cmd_age_ms | 距上一条有效上位机控制命令（SET_JOINT_TORQUE / SET_HOST_TARGET）的时间，饱和到 65535（=从未收到） |
+| 10 | u16 | host_cmd_age_ms | 距上一条有效上位机控制命令（SET_JOINT_TORQUE / SET_HOST_TARGET / SET_IK_TARGET）的时间，饱和到 65535（=从未收到） |
 | 12 | rec[N] | joints | |
 
 关节记录（28 B），对应固件字段：
@@ -234,7 +266,8 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 4. **限幅**：`|τ| ≤ min(host_torque_limit_nm[i], 编译期硬上限[i])`，超限截断，ACK 返回 OK_CLAMPED 并给出被截断关节的掩码。限幅值是固件编译期常量，上位机不能改；**填 0 则上位机永远出不了力**，要用上位机力矩必须先在固件里给非零值。
 5. **急停**：ESTOP(1) 清全部设定并锁存，锁存期间 SET_JOINT_TORQUE 一律回 REJECT_ESTOP；只有 ESTOP(0) 能解除，链路恢复也不会自动解除。遥控的保护档仍然最高优先。
 6. **上位机侧**：断线时所有等待应答的命令立刻失败；力矩命令**不重试**、不缓存，重连后不补发。上位机退出前发 ESTOP(1) + CLEAR_TORQUE。
-7. **Host 角度目标**：只在 `ARM_HOST` 状态接受，绝对目标逐轴检查 `ArmJointLimit_t`，再映射到当前多圈。`closed_loop=0` 时保持零力矩；闭环投入后若 300 ms 没收到任何有效帧，固件自动退出闭环并清 PID。
+7. **Host 角度目标**：只在 `ARM_HOST` 状态接受。新帧直接使用多圈目标并检查当前圈锁存限位；旧单圈帧映射到当前圈。`closed_loop=0` 时保持零力矩；闭环投入后若 300 ms 没收到任何有效帧，固件自动退出闭环并清 PID。
+8. **Host IK 目标**：只在 `ARM_HOST` / `ARM_HOST_IK` 接受。进入时固定当前分支，解析逆解后再检查关节限位；不可达、参考平面退化或限位不足时不改当前目标。链路超时会从 `ARM_HOST_IK` 退回 `ARM_HOST` 并清全部闭环。
 
 ## 8. 错误处理
 

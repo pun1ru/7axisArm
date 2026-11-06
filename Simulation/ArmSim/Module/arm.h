@@ -192,8 +192,10 @@ public:
 
     /* 状态由上层（脚本 / 上位机）修改，目标状态不属于本机角色时拒绝 */
     bool SetState(State state);
-    /* HOST 单关节目标：target_abs_deg 为单圈绝对角，必须落在该关节限位内 */
-    HostTargetResult SetHostTarget(int joint, float target_abs_deg, bool closed_loop);
+    /* HOST 单关节目标：默认 target_deg 为多圈角，必须落在进入 HOST 时锁存的多圈限位内。
+     * multi_turn=false 时按旧协议解释为单圈绝对角，并映射到当前圈。 */
+    HostTargetResult SetHostTarget(int joint, float target_deg, bool closed_loop,
+                                   bool multi_turn = true);
     /* HOST_IK 目标：从 HOST 进入时校验请求分支与当前分支一致；成功后全部关节投入闭环。
      * target 是 ForwardKinematics 同一坐标系的末端位姿。Manual 使用 psi_deg，
      * Auto 忽略 psi_deg，按当前分支和 cost_weights 自动选择臂角。 */

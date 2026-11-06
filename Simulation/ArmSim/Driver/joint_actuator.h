@@ -1,23 +1,34 @@
 #pragma once
 
+#include <algorithm>
+#include <string>
+
 #include "mujoco_world.h"
 
-/* 一个关节执行器：读角度/速度，写力矩。
+/* 一个关节执行器：读位置/速度，写力（转动关节 rad、rad/s、N*m；滑动关节 m、m/s、N）。
  * 仿真里电机和关节同轴、理想响应，所以不需要电机状态机、控制模式和 CAN 帧。
- * 这一层说的都是关节轴上的量（rad、rad/s、N*m），方向和零点由 Arm 处理。 */
+ * 方向和零点由 Arm 处理。每个执行器自带出力上限，对应 URDF 的 effort。 */
 class JointActuator {
 public:
-    JointActuator(MujocoWorld &world, int joint) : world_(&world), joint_(joint) {}
+    JointActuator(MujocoWorld &world, const std::string &joint_name, double effort_limit)
+        : world_(&world), handle_(world.BindJoint(joint_name)), effort_limit_(effort_limit)
+    {
+    }
 
-    double angle_rad() const { return world_->JointAngleRad(joint_); }
-    double velocity_rads() const { return world_->JointVelocityRad(joint_); }
-    /* 上一次写进物理引擎的力矩（限幅之后） */
-    double torque_nm() const { return torque_nm_; }
+    double position() const { return world_->JointPosition(handle_); }
+    double velocity() const { return world_->JointVelocity(handle_); }
+    /* 上一次写进物理引擎的力（限幅之后） */
+    double effort() const { return effort_; }
 
-    void SetTorque(double torque_nm) { torque_nm_ = world_->SetJointTorque(joint_, torque_nm); }
+    void SetEffort(double effort)
+    {
+        effort_ = std::clamp(effort == effort ? effort : 0.0, -effort_limit_, effort_limit_);
+        world_->SetJointForce(handle_, effort_);
+    }
 
 private:
     MujocoWorld *world_;
-    int joint_;
-    double torque_nm_ = 0.0;
+    int handle_;
+    double effort_limit_;
+    double effort_ = 0.0;
 };

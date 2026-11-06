@@ -212,8 +212,8 @@ class TestMonitorWindow(unittest.TestCase):
         w._switch(backend)
         self.assertTrue(wait_until(lambda: w.host._limits_ready))
         self.assertTrue(w.host.spins[0].isEnabled())
-        self.assertEqual(w.host.spins[0].minimum(), -180.0)
-        self.assertEqual(w.host.spins[0].maximum(), 180.0)
+        self.assertEqual(w.host.spins[0].minimum(), -90.0)
+        self.assertEqual(w.host.spins[0].maximum(), 90.0)
         backend.device.arm_state = ArmState.HOST
         pump(0.4)
         self.assertTrue(wait_until(lambda: w.host.send_closed_btn.isEnabled()))
@@ -237,6 +237,129 @@ class TestMonitorWindow(unittest.TestCase):
         w.host.stop_btn.click()
         self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
         self.assertTrue(wait_until(lambda: "0/7" in w.host.state_label.text(), 5.0))
+
+    def test_joint_angle_mode_closes_all_and_streams_slider_changes(self):
+        w = self.w
+        backend = MockBackend(rate_hz=200)
+        w._switch(backend)
+        self.assertTrue(wait_until(lambda: w.host._limits_ready))
+        backend.device.arm_state = ArmState.HOST
+        self.assertTrue(wait_until(lambda: w.host.mode_btn.isEnabled()))
+
+        w.host.mode_btn.click()
+        self.assertTrue(w.host.mode_btn.isChecked())
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0x7F, 5.0))
+        self.assertEqual(backend.device.host_target_valid_mask, 0x7F)
+
+        w.host.sliders[1].setValue(123)
+        self.assertTrue(wait_until(lambda: abs(backend.device.joints[1].host_target - 12.3) < 1e-6))
+        self.assertAlmostEqual(w.host.spins[1].value(), 12.3)
+        self.assertEqual(backend.device.host_closed_loop_mask, 0x7F)
+
+        w.host.spins[2].setValue(4.5)
+        self.assertTrue(wait_until(lambda: abs(backend.device.joints[2].host_target - 4.5) < 1e-6))
+        self.assertEqual(w.host.sliders[2].value(), 45)
+
+        self.assertTrue(wait_until(lambda: w.host.mode_btn.isEnabled()))
+        w.host.mode_btn.click()
+        self.assertFalse(w.host.mode_btn.isChecked())
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
+
+    def test_joint_slider_sends_directly_without_entering_mode(self):
+        w = self.w
+        backend = MockBackend(rate_hz=200)
+        w._switch(backend)
+        self.assertTrue(wait_until(lambda: w.host._limits_ready))
+        backend.device.arm_state = ArmState.HOST
+        self.assertTrue(wait_until(lambda: w.host.sliders[0].isEnabled() and w.host._is_host_state()))
+        self.assertFalse(w.host.mode_btn.isChecked())
+
+        w.host.sliders[0].setValue(85)
+        self.assertTrue(wait_until(lambda: abs(backend.device.joints[0].host_target - 8.5) < 1e-6))
+        self.assertEqual(backend.device.host_closed_loop_mask, 1)
+        self.assertFalse(w.host.mode_btn.isChecked())
+
+        self.assertTrue(wait_until(lambda: w.host.stop_btn.isEnabled()))
+        w.host.stop_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
+
+    def test_joint_angle_mode_yields_to_ik(self):
+        w = self.w
+        backend = MockBackend(rate_hz=200)
+        w._switch(backend)
+        self.assertTrue(wait_until(lambda: w.host._limits_ready))
+        backend.device.arm_state = ArmState.HOST
+        self.assertTrue(wait_until(lambda: w.host.mode_btn.isEnabled()))
+
+        w.host.mode_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0x7F, 5.0))
+        self.assertTrue(wait_until(lambda: w.ik.toggle_btn.isEnabled()))
+        w.ik.toggle_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.arm_state == ArmState.HOST_IK, 5.0))
+        self.assertTrue(wait_until(lambda: not w.host.mode_btn.isChecked()))
+        self.assertFalse(w.host._mode_active)
+
+        self.assertTrue(wait_until(lambda: w.ik.toggle_btn.isEnabled()))
+        w.ik.toggle_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.arm_state == ArmState.HOST))
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
+
+    def test_ik_panel_shows_branch_and_toggles_host_ik(self):
+        from armhost.ui.ik_panel import ScaledSlider
+
+        w = self.w
+        backend = MockBackend(rate_hz=200)
+        w._switch(backend)
+        self.assertTrue(wait_until(lambda: w.host._limits_ready))
+        backend.device.arm_state = ArmState.HOST
+        self.assertTrue(wait_until(lambda: w.ik.toggle_btn.isEnabled() and "λ2" in w.ik.branch_label.text()))
+        self.assertIn("λ2", w.status_panel.dev.v["posture"].text())
+
+        w.ik.toggle_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.arm_state == ArmState.HOST_IK))
+        self.assertTrue(wait_until(lambda: w.ik.apply_btn.isEnabled()))
+        self.assertTrue(w.ik.fields["x"].isEnabled())
+        self.assertIsInstance(w.ik.fields["x"], ScaledSlider)
+        self.assertIn("ψ 可达区间", w.ik.psi_range_label.text())
+        self.assertIn("非奇异", w.ik.psi_range_label.text())
+
+        w.ik.fields["psi"].setValue(-12.5)
+        w.ik.fields["x"].setValue(0.25)
+        self.assertTrue(wait_until(lambda: abs(backend.device.ik_psi_deg + 12.5) < 1e-6))
+        self.assertAlmostEqual(backend.device.ik_pose[0], 0.25, places=5)
+        w.ik.fields["x"].setValue(0.30)
+        self.assertTrue(wait_until(lambda: abs(backend.device.ik_pose[0] - 0.30) < 1e-6))
+        self.assertTrue(wait_until(lambda: "IK 闭环" in w.ik.ik_status.text()))
+
+        w.ik.auto_psi.setChecked(True)
+        self.assertFalse(w.ik.fields["psi"].isEnabled())
+        self.assertTrue(wait_until(lambda: backend.device.ik_auto_psi))
+        w.ik.weight_spins[2].setValue(3.5)
+        self.assertTrue(wait_until(lambda: abs(backend.device.ik_cost_weights[2] - 3.5) < 1e-6))
+        self.assertTrue(wait_until(lambda: "自动 ψ" in w.ik.ik_status.text()))
+        w.ik.auto_psi.setChecked(False)
+        self.assertTrue(w.ik.fields["psi"].isEnabled())
+
+        self.assertTrue(wait_until(lambda: w.ik.toggle_btn.isEnabled()))
+        w.ik.toggle_btn.click()
+        self.assertTrue(wait_until(lambda: backend.device.arm_state == ArmState.HOST))
+        self.assertEqual(backend.device.host_closed_loop_mask, 0)
+
+    def test_psi_slider_wraps_at_both_ends(self):
+        from armhost.ui.ik_panel import ScaledSlider, WrappedSlider
+
+        widget = ScaledSlider(-180.0, 180.0, 10, 0.5, 1, "°", wrap=True)
+        self.assertIsInstance(widget.slider, WrappedSlider)
+        step = widget.slider.singleStep()
+
+        widget.setValue(180.0)
+        widget.slider.shift_steps(step)
+        self.assertAlmostEqual(widget.value(), -179.5)
+
+        widget.setValue(-180.0)
+        widget.slider.shift_steps(-step)
+        self.assertAlmostEqual(widget.value(), 179.5)
+        widget.deleteLater()
 
     def _fill(self, n=2000):
         from armhost.model.state import RobotSample
@@ -311,6 +434,25 @@ class TestMonitorWindow(unittest.TestCase):
         dt = (time.perf_counter() - t0) / 10
         print(f"\n  refresh 35 curves x 30000 pts: {dt * 1e3:.1f} ms/frame")
         self.assertLess(dt, 0.1)
+
+
+class TestHostMultiTurnPanel(unittest.TestCase):
+    def test_current_angle_is_not_clamped_to_single_turn(self):
+        from types import SimpleNamespace
+
+        from armhost.ui.host_panel import HostPanel
+
+        panel = HostPanel(None)
+        panel._limits_abs = ((-180.0, 180.0),) * 7
+        panel._last_sample = SimpleNamespace(
+            joints=[SimpleNamespace(angle_deg=190.0)] + [SimpleNamespace(angle_deg=0.0)] * 6)
+        panel._refresh_spin_ranges()
+
+        self.assertAlmostEqual(panel.spins[0].minimum(), 180.0)
+        self.assertAlmostEqual(panel.spins[0].maximum(), 540.0)
+        panel.load_current()
+        self.assertAlmostEqual(panel.spins[0].value(), 190.0)
+        panel.deleteLater()
 
 
 if __name__ == "__main__":

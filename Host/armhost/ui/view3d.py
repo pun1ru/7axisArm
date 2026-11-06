@@ -3,7 +3,8 @@
 选型见 docs/05_view3d.md：场景只有几十条线段，用 QPainter 自己投影比引入 OpenGL 依赖更稳：
 零额外依赖、远程桌面 / 虚拟机 / 无显卡驱动都能用、offscreen 可截图测试、中文标签直接画。
 
-坐标约定：世界系 = DH 基座系 O_0（与 Simulation/mujoco/robot.xml 世界系平行），Z 朝上，单位 m。
+坐标约定：世界系来自 Simulation/mujoco/BigArm/robot.xml，Z 朝上，单位 m；DH 基座 O_0 是腰部
+连杆坐标系，显示时可用 world_mount 叠加 main.cpp 里 joint1 的安装 xyz/rpy。
 交互：左键拖动旋转，右键 / 中键拖动平移，滚轮缩放，双击复位；视角按钮：等轴 / 前 / 侧 / 俯。
 渲染节流：只有姿态、视角或开关变化才重绘，并由定时器限到 ≤ max_fps。
 """
@@ -15,7 +16,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
 from ..kinematics import DHTable, euler_zyx_deg, forward_frames
@@ -23,6 +24,8 @@ from . import theme
 
 AXIS_COLORS = (QColor("#ef5350"), QColor("#66bb6a"), QColor("#42a5f5"))   # x y z
 VIEWS = {"iso": (-45.0, 25.0), "front": (-90.0, 0.0), "side": (0.0, 0.0), "top": (-90.0, 89.0)}
+WORKSPACE_COLORS = (QColor(48, 92, 138, 105), QColor(48, 126, 176, 110), QColor(55, 164, 204, 115),
+                    QColor(77, 199, 214, 120), QColor(146, 216, 158, 128), QColor(255, 210, 90, 140))
 
 
 class View3D(QWidget):
@@ -44,10 +47,16 @@ class View3D(QWidget):
         self.show_labels = True
         self.show_grid = True
         self.show_world = True
+        self.world_mount = True                    # 显示时叠加 URDF joint1 的腰部安装变换
+        self.show_workspace = False
+        self.workspace_points = np.empty((0, 3))
+        self.workspace_density = np.empty(0, dtype=float)
+        self.workspace_info = ""
         self.selected: int | None = None
         self.selected_info: list[str] = []
         self.frame_len = 0.04
         # 相机（轨道相机，围绕 target）
+        self._recompute()
         self.reset_view()
         self._drag_btn = None
         self._drag_pos = QPointF()
@@ -74,6 +83,10 @@ class View3D(QWidget):
         self._recompute()
 
     def set_option(self, name: str, value) -> None:
+        if name == "world_mount":
+            self.world_mount = bool(value)
+            self._recompute()
+            return
         setattr(self, name, value)
         self._dirty = True
 
@@ -87,6 +100,36 @@ class View3D(QWidget):
         self.selected_info = info or []
         self._dirty = True
 
+    def set_workspace(self, points_m, density=None, info: str = "") -> None:
+        pts = np.asarray(points_m, dtype=float).reshape(-1, 3)
+        if density is None:
+            den = np.ones(len(pts), dtype=float)
+        else:
+            den = np.asarray(density, dtype=float).reshape(-1)
+            if len(den) != len(pts):
+                raise ValueError("工作空间点数和密度长度不一致")
+        self.workspace_points = pts
+        self.workspace_density = np.clip(den, 0.0, 1.0)
+        self.workspace_info = info
+        self._dirty = True
+
+    def clear_workspace(self) -> None:
+        self.workspace_points = np.empty((0, 3))
+        self.workspace_density = np.empty(0, dtype=float)
+        self.workspace_info = ""
+        self._dirty = True
+
+    def fit_workspace(self) -> None:
+        if len(self.workspace_points) == 0:
+            return
+        points = self._display_points(self.workspace_points)
+        lo = points.min(axis=0)
+        hi = points.max(axis=0)
+        self.target = 0.5 * (lo + hi)
+        radius = 0.5 * float(np.linalg.norm(hi - lo))
+        self.dist = max(0.15, radius / math.tan(math.radians(20.0)) * 1.15)
+        self._dirty = True
+
     def end_pose(self) -> tuple[np.ndarray, tuple[float, float, float]]:
         T = self.frames[-1]
         return T[:3, 3].copy(), euler_zyx_deg(T[:3, :3])
@@ -95,12 +138,23 @@ class View3D(QWidget):
         self.yaw, self.pitch = VIEWS.get(name, VIEWS["iso"])
         reach = sum(abs(r.a_m) + abs(r.d_m) for r in self.table.rows) or 0.3
         self.dist = max(0.25, reach * 2.6)
-        self.target = np.array([0.0, 0.0, reach * 0.45])
+        origins = np.array([T[:3, 3] for T in self.frames])
+        self.target = 0.5 * (origins.min(axis=0) + origins.max(axis=0))
         self._dirty = True
 
     def _recompute(self) -> None:
-        self.frames = forward_frames(self.table, self.q_deg)
+        frames = forward_frames(self.table, self.q_deg)
+        if self.world_mount:
+            base = self.table.base_transform
+            frames = [base @ T for T in frames]
+        self.frames = frames
         self._dirty = True
+
+    def _display_points(self, points: np.ndarray) -> np.ndarray:
+        if not self.world_mount or len(points) == 0:
+            return points
+        base = self.table.base_transform
+        return points @ base[:3, :3].T + base[:3, 3]
 
     def _maybe_update(self) -> None:
         if self._dirty and self.isVisible():
@@ -162,7 +216,12 @@ class View3D(QWidget):
                 e = np.zeros(3)
                 e[a] = 0.08
                 add((0, 0, 0), e, QPen(AXIS_COLORS[a], 2))
+        if self.show_workspace and len(self.workspace_points):
+            self._draw_workspace(p, project)
         F = self.frames
+        if self.world_mount and np.linalg.norm(F[0][:3, 3]) > 1e-6:
+            pen = QPen(QColor(255, 255, 255, 55), 2, Qt.DashLine)
+            add((0, 0, 0), F[0][:3, 3], pen)
         origins = np.array([T[:3, 3] for T in F])
         # 连杆：相邻且不重合的原点之间画长杆
         if self.show_links:
@@ -224,19 +283,62 @@ class View3D(QWidget):
                 stacked[key] = k + 1
                 p.setPen(c.lighter(120) if not sel else QColor("white"))
                 p.drawText(QPointF(P[0] + 10, P[1] - 6 + 13 * k), f"J{i}")
+        if self.show_labels and self.show_world:
+            world_scr, _ = project(np.array([[0.0, 0.0, 0.0]]))
+            if not np.isnan(world_scr[0]).any():
+                p.setPen(QColor(theme.MUTED))
+                p.drawText(QPointF(world_scr[0][0] + 8, world_scr[0][1] - 4), "世界 O_w")
         if self.show_labels and not np.isnan(scr[0]).any():
             p.setPen(QColor(theme.MUTED))
-            p.drawText(QPointF(scr[0][0] + 8, scr[0][1] + 14), "基座 O₀")
+            p.drawText(QPointF(scr[0][0] + 8, scr[0][1] + 14), "腰部 O₀" if self.world_mount else "DH 基座 O₀")
+        if self.show_workspace and len(self.workspace_points):
+            self._draw_workspace_end(p, project)
         self._draw_hud(p)
         p.end()
         self.renders += 1
         self.last_render_ms = (time.perf_counter() - t0) * 1e3
 
+    def _draw_workspace(self, p: QPainter, project) -> None:
+        scr, z = project(self._display_points(self.workspace_points))
+        ok = np.isfinite(scr).all(axis=1) & (z > 1e-3)
+        if not ok.any():
+            return
+        scr = scr[ok]
+        den = self.workspace_density[ok]
+        bins = np.minimum((den * len(WORKSPACE_COLORS)).astype(np.int64), len(WORKSPACE_COLORS) - 1)
+        for k, color in enumerate(WORKSPACE_COLORS):
+            pts = scr[bins == k]
+            if len(pts) == 0:
+                continue
+            p.setPen(QPen(color, 2.0))
+            p.drawPoints(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
+
+    def _draw_workspace_end(self, p: QPainter, project) -> None:
+        pos, _ = self.end_pose()
+        scr, z = project(np.array([pos]))
+        P = scr[0]
+        if np.isnan(P).any() or z[0] <= 1e-3:
+            return
+        p.setPen(QPen(QColor("#ffffff"), 2))
+        p.setBrush(QColor(theme.WARN))
+        p.drawEllipse(QPointF(*P), 5.5, 5.5)
+        p.drawLine(QPointF(P[0] - 10, P[1]), QPointF(P[0] + 10, P[1]))
+        p.drawLine(QPointF(P[0], P[1] - 10), QPointF(P[0], P[1] + 10))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(QPointF(P[0] + 9, P[1] - 9), "当前末端")
+
     def _draw_hud(self, p: QPainter) -> None:
         pos, (r, pi, y) = self.end_pose()
-        lines = [f"末端 x {pos[0] * 1e3:+8.1f}  y {pos[1] * 1e3:+8.1f}  z {pos[2] * 1e3:+8.1f} mm",
-                 f"     roll {r:+7.1f}  pitch {pi:+7.1f}  yaw {y:+7.1f} °",
-                 f"DH：{self.table.source}"]
+        prefix = "世界" if self.world_mount else "DH基座"
+        lines = [f"末端({prefix}) x {pos[0] * 1e3:+8.1f}  y {pos[1] * 1e3:+8.1f}  z {pos[2] * 1e3:+8.1f} mm",
+                 f"            roll {r:+7.1f}  pitch {pi:+7.1f}  yaw {y:+7.1f} °"]
+        if self.world_mount:
+            T_dh = np.linalg.inv(self.table.base_transform) @ self.frames[-1]
+            p_dh = T_dh[:3, 3]
+            lines.append(f"末端(DH) x {p_dh[0] * 1e3:+8.1f}  y {p_dh[1] * 1e3:+8.1f}  z {p_dh[2] * 1e3:+8.1f} mm")
+        lines.append(f"DH：{self.table.source}")
+        if self.show_workspace and self.workspace_info:
+            lines.append(self.workspace_info)
         if self.selected is not None and self.selected < self.table.n:
             lines.append("")
             lines.append(f"▶ J{self.selected}  q = {self.q_deg[self.selected]:+.3f}°")

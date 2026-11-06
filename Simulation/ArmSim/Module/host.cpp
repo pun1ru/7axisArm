@@ -1,5 +1,6 @@
 #include "host.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -9,7 +10,7 @@ constexpr uint8_t kSof1 = 0x5A;
 constexpr uint8_t kFrameVersion = 0x10;
 constexpr size_t kHeaderSize = 9;
 constexpr size_t kFrameOverhead = 11;
-constexpr uint8_t kMaxRequest = 32;
+constexpr uint8_t kMaxRequest = 64;
 
 constexpr uint8_t kMsgHeartbeat = 0x01;
 constexpr uint8_t kMsgDeviceInfoReq = 0x02;
@@ -17,6 +18,8 @@ constexpr uint8_t kMsgDeviceInfo = 0x03;
 constexpr uint8_t kMsgAck = 0x04;
 constexpr uint8_t kMsgJointState = 0x10;
 constexpr uint8_t kMsgSetHostTarget = 0x23;
+constexpr uint8_t kMsgArmPosture = 0x13;
+constexpr uint8_t kMsgSetIkTarget = 0x24;
 constexpr uint8_t kMsgParamRead = 0x28;
 constexpr uint8_t kMsgParamValue = 0x2A;
 
@@ -37,6 +40,22 @@ constexpr uint8_t kFlagAckReq = 0x01;
 constexpr uint8_t kActionSetOpen = 0;      // 保存目标，该关节不闭环
 constexpr uint8_t kActionSetClosed = 1;    // 保存目标，该关节投入闭环
 constexpr uint8_t kActionStopAll = 2;      // 全部关节退出闭环，目标保留
+constexpr uint8_t kHostTargetFlagMultiTurn = 0x01;   // target_deg 为多圈角
+constexpr uint8_t kIkActionSet = 0;        // 进入/更新 HOST_IK 目标
+constexpr uint8_t kIkActionStop = 1;       // 退出 HOST_IK，回到 HOST
+constexpr uint8_t kIkPsiManual = 0;        // 使用 payload 中的 psi_deg
+constexpr uint8_t kIkPsiAuto = 1;          // 按权重自动选择 ψ
+
+constexpr size_t kIkTargetSizeLegacy = 32;
+constexpr size_t kIkTargetSize = 64;
+constexpr size_t kPostureSize = 32;
+constexpr uint16_t kPostureDivider = 5;    // 每 5 帧 JOINT_STATE 发一帧 ARM_POSTURE
+
+constexpr uint8_t kPostureValid = 0x01;
+constexpr uint8_t kPostureShoulderSingular = 0x02;
+constexpr uint8_t kPostureWristSingular = 0x04;
+constexpr uint8_t kPostureIkActive = 0x08;
+constexpr uint8_t kPostureAutoPsi = 0x40;
 
 // PARAM_READ 的参数号；类型：U16=2 I8=1 F32=6
 constexpr uint16_t kParamStateRateHz = 0x0001;
@@ -127,6 +146,11 @@ float GetFloat(const uint8_t *in)
 
     std::memcpy(&v, &bits, sizeof(v));
     return v;
+}
+
+bool IsHostControl(Arm::State state)
+{
+    return state == Arm::State::Host || state == Arm::State::HostIk;
 }
 
 /* 返回参数类型和元素个数；未知参数返回 false */
@@ -227,25 +251,25 @@ bool Host::LinkOk(uint32_t now_ms) const
 
 void Host::PackJoint(int joint, uint8_t *out) const
 {
-    const Arm::Observer &obs = arm_.observer();
-    const Arm::JointCtrl &ctrl = arm_.joint(joint);
+    const Arm::JointObs &obs = arm_.observer().joint;
+    const Arm::Target &target = arm_.target();
     const uint8_t bit = static_cast<uint8_t>(1U << joint);
     uint8_t flags = kJointOnline;
 
-    if (arm_.state() == Arm::State::Host && (arm_.host_target_valid_mask() & bit) != 0U)
+    if (IsHostControl(arm_.state()) && (target.host.valid_mask & bit) != 0U)
     {
         flags |= kJointTargetValid;
     }
-    if (arm_.state() == Arm::State::Host && (arm_.host_closed_loop_mask() & bit) != 0U)
+    if (IsHostControl(arm_.state()) && (target.host.closed_loop_mask & bit) != 0U)
     {
         flags |= kJointClosedLoop;
     }
 
-    PutFloat(out + 0, obs.joint_deg[joint]);
-    PutFloat(out + 4, obs.joint_vel_dps[joint]);
-    PutFloat(out + 8, obs.joint_torque_nm[joint]);
-    PutFloat(out + 12, ctrl.target_deg);
-    PutFloat(out + 16, ctrl.output);
+    PutFloat(out + 0, obs.deg[joint]);
+    PutFloat(out + 4, obs.vel_dps[joint]);
+    PutFloat(out + 8, obs.torque_nm[joint]);
+    PutFloat(out + 12, target.joint[joint].deg);
+    PutFloat(out + 16, arm_.control().output.joint_nm[joint]);
     PutU16(out + 20, obs.encoder[joint]);
     out[22] = arm_.enabled() ? 1U : 0U;   // 电机状态：1 = 使能，0 = 失能
     out[23] = 0;                          // error_id：仿真没有电机故障
@@ -268,7 +292,7 @@ void Host::SendJointState(double sim_time_s, uint32_t now_ms)
     {
         flags |= kFlagCtrlAligning;
     }
-    if (arm_.state() == Arm::State::Host && arm_.host_closed_loop_mask() != 0U)
+    if (IsHostControl(arm_.state()) && arm_.target().host.closed_loop_mask != 0U)
     {
         flags |= kFlagHostClosedLoop;
     }
@@ -289,6 +313,47 @@ void Host::SendJointState(double sim_time_s, uint32_t now_ms)
         PackJoint(i, payload + kStateHeadSize + i * kRecSize);
     }
     SendFrame(kMsgJointState, payload, sizeof(payload));
+}
+
+/* 当前构型量：分支、臂角、末端位姿，以及最近一次 IK 求解结果。UI 只读显示。 */
+void Host::SendPosture()
+{
+    uint8_t payload[kPostureSize] = {};
+    const Arm::Observer &obs = arm_.observer();
+    const Arm::IkTarget &ik = arm_.target().ik;
+    uint8_t flags = 0;
+
+    payload[0] = obs.posture.branch.valid ? obs.posture.branch.index() : 0xFFU;
+    if (obs.posture.arm_angle.valid)
+    {
+        flags |= kPostureValid;
+    }
+    if (ik.shoulder_singular)
+    {
+        flags |= kPostureShoulderSingular;
+    }
+    if (ik.wrist_singular)
+    {
+        flags |= kPostureWristSingular;
+    }
+    if (ik.active)
+    {
+        flags |= kPostureIkActive;
+        flags |= static_cast<uint8_t>((static_cast<uint8_t>(ik.status) & 0x03U) << 4);
+        if (ik.psi_mode == IkPsiMode::Auto)
+        {
+            flags |= kPostureAutoPsi;
+        }
+    }
+    payload[1] = flags;
+    PutFloat(payload + 4, obs.posture.arm_angle.psi_deg);
+    PutFloat(payload + 8, obs.pose.position_m[0]);
+    PutFloat(payload + 12, obs.pose.position_m[1]);
+    PutFloat(payload + 16, obs.pose.position_m[2]);
+    PutFloat(payload + 20, obs.pose.euler_deg[0]);
+    PutFloat(payload + 24, obs.pose.euler_deg[1]);
+    PutFloat(payload + 28, obs.pose.euler_deg[2]);
+    SendFrame(kMsgArmPosture, payload, sizeof(payload));
 }
 
 /*--------------------------------------参数读取--------------------------------------*/
@@ -378,7 +443,8 @@ void Host::ProcessDeviceInfo(const Request &req)
     SendReply(req, kMsgDeviceInfo, payload, sizeof(payload));
 }
 
-/* payload: joint(1) action(1) reserved(2) target_deg(4) */
+/* payload: joint(1) action(1) flags(1) reserved(1) target_deg(4)
+ * flags bit0 = 1 时 target_deg 为多圈角；0 为兼容旧 Host 的单圈绝对角。 */
 void Host::ProcessSetTarget(const Request &req, uint32_t now_ms)
 {
     uint8_t result = kAckOk;
@@ -394,8 +460,12 @@ void Host::ProcessSetTarget(const Request &req, uint32_t now_ms)
     else if (req.payload[1] == kActionSetOpen || req.payload[1] == kActionSetClosed)
     {
         const bool closed = req.payload[1] == kActionSetClosed;
+        const uint8_t flags = req.payload[2];
+        const bool multi_turn = (flags & kHostTargetFlagMultiTurn) != 0U;
 
-        if (arm_.SetHostTarget(req.payload[0], GetFloat(req.payload + 4), closed) !=
+        if ((flags & static_cast<uint8_t>(~kHostTargetFlagMultiTurn)) != 0U ||
+            req.payload[3] != 0U ||
+            arm_.SetHostTarget(req.payload[0], GetFloat(req.payload + 4), closed, multi_turn) !=
             Arm::HostTargetResult::Ok)
         {
             result = kAckBadParam;
@@ -404,6 +474,82 @@ void Host::ProcessSetTarget(const Request &req, uint32_t now_ms)
     else
     {
         result = kAckBadParam;
+    }
+
+    if (result == kAckOk)
+    {
+        last_cmd_ms_ = now_ms;
+        ever_cmd_ = true;
+    }
+    Ack(req, result);
+}
+
+/* payload: action(1) branch(1) psi_mode(1) reserved(1) xyz(12) rpy_deg(12) psi_deg(4)
+ *          cost_weight[7](28) reserved2(4)，共 64 B；兼容仅含前 32 B 的 Manual 旧帧。
+ * action=SET 时从 HOST 进入或更新 HOST_IK；action=STOP 时退出全部上位机闭环并回到 HOST。 */
+void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
+{
+    uint8_t result = kAckOk;
+    const bool extended = req.length == kIkTargetSize;
+
+    if (req.length != kIkTargetSize && req.length != kIkTargetSizeLegacy)
+    {
+        result = kAckBadLength;
+    }
+    else if (req.payload[0] == kIkActionStop)
+    {
+        arm_.StopHostControl();
+    }
+    else if (req.payload[0] != kIkActionSet)
+    {
+        result = kAckBadParam;
+    }
+    else
+    {
+        const uint8_t branch_index = req.payload[1];
+        const float x = GetFloat(req.payload + 4);
+        const float y = GetFloat(req.payload + 8);
+        const float z = GetFloat(req.payload + 12);
+        const float roll = GetFloat(req.payload + 16);
+        const float pitch = GetFloat(req.payload + 20);
+        const float yaw = GetFloat(req.payload + 24);
+        const float psi_deg = GetFloat(req.payload + 28);
+        const uint8_t psi_mode_raw = extended ? req.payload[2] : kIkPsiManual;
+        IkCostWeights cost_weights;
+        bool weights_valid = true;
+
+        if (extended)
+        {
+            for (int i = 0; i < kJointCount; ++i)
+            {
+                cost_weights.weight[static_cast<size_t>(i)] = GetFloat(req.payload + 32 + 4 * i);
+            }
+            weights_valid = IsValidIkCostWeights(cost_weights);
+        }
+
+        if (branch_index >= 8U || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+            !std::isfinite(roll) || !std::isfinite(pitch) || !std::isfinite(yaw) ||
+            !std::isfinite(psi_deg) || (psi_mode_raw != kIkPsiManual && psi_mode_raw != kIkPsiAuto) ||
+            (psi_mode_raw == kIkPsiAuto && !weights_valid))
+        {
+            result = kAckBadParam;
+        }
+        else
+        {
+            Branch branch;
+            branch.valid = true;
+            branch.shoulder = (branch_index & 0x01U) != 0U ? -1 : 1;
+            branch.elbow = (branch_index & 0x02U) != 0U ? -1 : 1;
+            branch.wrist = (branch_index & 0x04U) != 0U ? -1 : 1;
+            const Mat4 target = TransformFromXyzRpy({x, y, z},
+                                                    {roll * kDegToRad, pitch * kDegToRad, yaw * kDegToRad});
+            const IkPsiMode psi_mode = psi_mode_raw == kIkPsiAuto ? IkPsiMode::Auto : IkPsiMode::Manual;
+
+            if (arm_.SetIkTarget(target, branch, psi_mode, psi_deg, cost_weights) != Arm::IkTargetResult::Ok)
+            {
+                result = kAckBadParam;
+            }
+        }
     }
 
     if (result == kAckOk)
@@ -439,6 +585,9 @@ void Host::ProcessRequest(const Request &req, uint32_t now_ms)
         break;
     case kMsgSetHostTarget:
         ProcessSetTarget(req, now_ms);
+        break;
+    case kMsgSetIkTarget:
+        ProcessSetIkTarget(req, now_ms);
         break;
     default:
         Ack(req, kAckUnsupported);
@@ -530,9 +679,15 @@ void Host::Step(double sim_time_s, uint32_t wall_ms)
     }
 
     /* 上位机掉线：退出所有闭环，关节回到只受重力前馈托住 */
-    if (arm_.state() == Arm::State::Host && arm_.host_closed_loop_mask() != 0U && !LinkOk(wall_ms))
+    if (IsHostControl(arm_.state()) && arm_.target().host.closed_loop_mask != 0U && !LinkOk(wall_ms))
     {
         arm_.StopHostControl();
+    }
+
+    if (++posture_divider_count_ >= kPostureDivider)
+    {
+        posture_divider_count_ = 0;
+        SendPosture();
     }
 
     if (++divider_count_ >= state_divider_)

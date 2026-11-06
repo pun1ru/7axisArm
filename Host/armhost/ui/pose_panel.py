@@ -18,10 +18,12 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComb
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QSplitter,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..kinematics import DHRow, DHTable, default_dh
+from ..kinematics import DHRow, DHTable, current_dh
 from ..model import RobotSample
 from ..protocol.enums import MotorStatus
+from .layout_util import scrollable
 from .view3d import View3D
+from .workspace_panel import WorkspacePanel
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 DH_FILE = CONFIG_DIR / "dh.json"
@@ -29,7 +31,7 @@ DH_COLS = (("alpha (deg)", "alpha_deg", 3), ("a (m)", "a_m", 5), ("d (m)", "d_m"
 
 
 class DHEditor(QWidget):
-    """DH 参数表编辑。默认读单片机工程 module_init.c；保存到 config/dh.json 后启动优先用它。"""
+    """DH 参数表编辑。默认读当前 ArmSim/BigArm；保存到 config/dh.json 后启动优先用它。"""
     applied = Signal(object)            # DHTable
 
     def __init__(self, table: DHTable, read_device: Callable[[], Future | None] | None = None, parent=None) -> None:
@@ -46,8 +48,8 @@ class DHEditor(QWidget):
         self.auto = QCheckBox("改动后立即生效")
         self.auto.setChecked(True)
         b_apply = QPushButton("应用")
-        b_fw = QPushButton("恢复单片机默认")
-        b_fw.setToolTip("重新读取 Real/DIYcontroller/App/module_init.c 的 ARM_DH_Jx（只读，不改固件）")
+        b_fw = QPushButton("恢复当前模型")
+        b_fw.setToolTip("重新读取 Simulation/ArmSim/main.cpp 的 MakeArmConfig()：DH + 腰部安装位姿")
         self.b_dev = QPushButton("从设备读取")
         self.b_dev.setToolTip("通过 PARAM_READ 0x0400 读取单片机当前 RAM 里的 DH 表（需要固件实现参数读写）")
         b_load = QPushButton("导入…")
@@ -55,7 +57,7 @@ class DHEditor(QWidget):
         b_save.setToolTip(f"保存到 {DH_FILE.relative_to(DH_FILE.parents[1])}，下次启动优先使用")
         b_export = QPushButton("导出…")
         b_apply.clicked.connect(self._apply)
-        b_fw.clicked.connect(lambda: self.set_table(default_dh(), emit=True))
+        b_fw.clicked.connect(lambda: self.set_table(current_dh(), emit=True))
         self.b_dev.clicked.connect(self._from_device)
         b_load.clicked.connect(self._import)
         b_save.clicked.connect(lambda: self._save(DH_FILE))
@@ -74,6 +76,10 @@ class DHEditor(QWidget):
         lay.addWidget(self.auto)
         lay.addLayout(grid)
         lay.addWidget(self.src)
+        self.base_info = QLabel()
+        self.base_info.setObjectName("title")
+        self.base_info.setWordWrap(True)
+        lay.addWidget(self.base_info)
         self._loading = False
         self.set_table(table)
 
@@ -89,6 +95,13 @@ class DHEditor(QWidget):
         self._loading = False
         self._source = t.source
         self.src.setText(f"当前来源：{t.source}")
+        self._base_xyz = tuple(t.base_xyz_m)
+        self._base_rpy = tuple(t.base_rpy_deg)
+        self.base_info.setText("腰部安装（世界 → DH 基座）："
+                               f"xyz = ({self._base_xyz[0]:.6f}, {self._base_xyz[1]:.6f}, "
+                               f"{self._base_xyz[2]:.6f}) m，"
+                               f"rpy = ({self._base_rpy[0]:.3f}, {self._base_rpy[1]:.3f}, "
+                               f"{self._base_rpy[2]:.3f})°")
         if emit:
             self.applied.emit(t)
 
@@ -103,7 +116,7 @@ class DHEditor(QWidget):
                 except ValueError:
                     raise ValueError(f"J{r} 第 {c + 1} 列不是数字：{txt!r}") from None
             rows.append(DHRow(*vals))
-        return DHTable(rows, "手动编辑")
+        return DHTable(rows, "手动编辑", self._base_xyz, self._base_rpy)
 
     def _on_edit(self, _it) -> None:
         if self._loading or not self.auto.isChecked():
@@ -160,19 +173,22 @@ class DHEditor(QWidget):
             return
         self.b_dev.setEnabled(True)
         try:
-            self.set_table(fut.result(), emit=True)
+            table = fut.result().copy()
+            table.base_xyz_m = self._base_xyz
+            table.base_rpy_deg = self._base_rpy
+            self.set_table(table, emit=True)
         except Exception as e:
             self.src.setText(f"当前来源：{self._source}（设备读取失败：{e}）")
 
 
 def load_startup_dh() -> DHTable:
-    """启动顺序：config/dh.json（用户保存过）→ 单片机工程 → 内置副本"""
+    """启动顺序：config/dh.json（用户保存过）→ ArmSim/BigArm → 内置 BigArm"""
     if DH_FILE.exists():
         try:
             return DHTable.load_json(DH_FILE)
         except (OSError, ValueError, KeyError):
             pass
-    return default_dh()
+    return current_dh()
 
 
 class PosePanel(QWidget):
@@ -180,7 +196,8 @@ class PosePanel(QWidget):
 
     def __init__(self, get_sample: Callable[[], RobotSample | None],
                  read_device_dh: Callable[[], Future | None] | None = None,
-                 table: DHTable | None = None, parent=None, fps: int = 30) -> None:
+                 table: DHTable | None = None, parent=None, fps: int = 30,
+                 read_device_limits: Callable[[], Future | None] | None = None) -> None:
         super().__init__(parent)
         self._get_sample = get_sample
         table = table or load_startup_dh()
@@ -204,6 +221,13 @@ class PosePanel(QWidget):
             cb.toggled.connect(lambda on, a=attr: self.view.set_option(a, on))
             self.checks[attr] = cb
             dg.addWidget(cb, k // 3, k % 3)
+        world_mount = QCheckBox("世界坐标（含腰部安装）")
+        world_mount.setToolTip("勾选：按 URDF joint1 的 xyz/rpy 把 DH 基座放到 MuJoCo 世界系；"
+                               "取消：显示腰部连杆坐标系（IK 目标使用的坐标系）")
+        world_mount.setChecked(self.view.world_mount)
+        world_mount.toggled.connect(lambda on: self.view.set_option("world_mount", on))
+        self.checks["world_mount"] = world_mount
+        dg.addWidget(world_mount, 2, 0, 1, 3)
         # 每个坐标系单独开关
         fr = QHBoxLayout()
         fr.addWidget(QLabel("坐标系"))
@@ -215,7 +239,7 @@ class PosePanel(QWidget):
             self.frame_checks.append(cb)
             fr.addWidget(cb)
         fr.addStretch(1)
-        dg.addLayout(fr, 2, 0, 1, 3)
+        dg.addLayout(fr, 3, 0, 1, 3)
         self.frame_len = QDoubleSpinBox()
         self.frame_len.setRange(5, 200)
         self.frame_len.setValue(self.view.frame_len * 1000)
@@ -225,7 +249,7 @@ class PosePanel(QWidget):
         row.addWidget(QLabel("坐标轴长度"))
         row.addWidget(self.frame_len)
         row.addStretch(1)
-        dg.addLayout(row, 3, 0, 1, 3)
+        dg.addLayout(row, 4, 0, 1, 3)
 
         # ---------------- 数据来源 + 选中关节
         srcbox = QGroupBox("姿态来源")
@@ -277,7 +301,14 @@ class PosePanel(QWidget):
 
         # ---------------- DH 编辑
         self.dh = DHEditor(table, read_device_dh)
-        self.dh.applied.connect(self.view.set_table)
+        self.dh.applied.connect(self._on_table_applied)
+
+        # ---------------- 工作空间
+        self.workspace = WorkspacePanel(table, read_device_limits)
+        self.workspace.cloud_ready.connect(self._on_workspace_ready)
+        self.workspace.cleared.connect(self.view.clear_workspace)
+        self.workspace.visibility_changed.connect(lambda on: self.view.set_option("show_workspace", on))
+        self.workspace.fit_requested.connect(self.view.fit_workspace)
 
         ctrl = QWidget()
         cl = QVBoxLayout(ctrl)
@@ -291,6 +322,8 @@ class PosePanel(QWidget):
         scroll.setWidget(ctrl)
         tabs = QTabWidget()
         tabs.addTab(scroll, "显示 / 姿态")
+        self.workspace_tab = scrollable(self.workspace)
+        tabs.addTab(self.workspace_tab, "工作空间")
         tabs.addTab(self.dh, "DH 参数")
         self.side_tabs = tabs
         split = QSplitter(Qt.Horizontal)
@@ -306,6 +339,17 @@ class PosePanel(QWidget):
         self.timer.start()
 
     # ================================================================
+    def _on_table_applied(self, table: DHTable) -> None:
+        self.view.set_table(table)
+        self.workspace.set_table(table)
+
+    def _on_workspace_ready(self, cloud) -> None:
+        branch = "全部 8 分支" if cloud.branch is None else f"分支 #{cloud.branch}"
+        info = (f"工作空间（{branch}）：{len(cloud.points_m):,} 体素 / {cloud.samples:,} 采样 / "
+                f"体素 {cloud.voxel_m * 1000:.1f} mm")
+        self.view.set_workspace(cloud.points_m, cloud.density, info)
+        self.view.set_option("show_workspace", self.workspace.show_cb.isChecked())
+
     def _on_src(self) -> None:
         manual = self.src_manual.isChecked()
         for s in self.sliders:

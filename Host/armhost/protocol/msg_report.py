@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from .enums import (AckResult, ArmRole, ArmState, EventCode, JointFlag, MotorStatus,
-                    MsgType, Severity, StatusFlag)
+                    MsgType, PostureFlag, Severity, StatusFlag)
 from .msg_link import DecodeError, as_enum, need
 
 
@@ -108,6 +108,48 @@ class JointState:
         need(p, cls.H.size + n * rs, "JOINT_STATE")
         joints = [JointRecord.decode(p, cls.H.size + i * rs) for i in range(n)]
         return cls(t, as_enum(ArmState, st), StatusFlag(fl), age, joints)
+
+
+@dataclass(slots=True)
+class ArmPosture:
+    """0 branch u8 | 1 flags u8 | 2 reserved u16 | 4 psi_deg f32
+    8 x f32 | 12 y f32 | 16 z f32 | 20 roll f32 | 24 pitch f32 | 28 yaw f32
+
+    branch 为 0..7，0xFF 表示无效；flags 见 PostureFlag（bit6 = 自动 ψ）。位姿与
+    JOINT_STATE / ForwardKinematics 使用同一坐标系（腰部连杆坐标系）。"""
+    TYPE: ClassVar[int] = MsgType.ARM_POSTURE
+    S: ClassVar[struct.Struct] = struct.Struct("<BBHf6f")
+    branch: int = 0xFF
+    flags: PostureFlag | int = PostureFlag.NONE
+    psi_deg: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
+    yaw: float = 0.0
+
+    def encode(self) -> bytes:
+        return self.S.pack(self.branch & 0xFF, int(self.flags), 0, self.psi_deg,
+                           self.x, self.y, self.z, self.roll, self.pitch, self.yaw)
+
+    @classmethod
+    def decode(cls, p: bytes) -> "ArmPosture":
+        need(p, cls.S.size, "ARM_POSTURE")
+        branch, flags, _reserved, psi, x, y, z, roll, pitch, yaw = cls.S.unpack_from(p)
+        return cls(branch, PostureFlag(flags), psi, x, y, z, roll, pitch, yaw)
+
+    @property
+    def valid(self) -> bool:
+        return self.branch != 0xFF and PostureFlag.VALID in PostureFlag(self.flags)
+
+    @property
+    def ik_active(self) -> bool:
+        return PostureFlag.IK_ACTIVE in PostureFlag(self.flags)
+
+    @property
+    def ik_status(self) -> int:
+        return (int(self.flags) >> 4) & 0x03
 
 
 @dataclass(slots=True)

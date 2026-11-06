@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from ..protocol.enums import ArmRole, ArmState, JointFlag, MotorStatus, StatusFlag
 from ..protocol.msg_link import DeviceInfo
-from ..protocol.msg_report import Event, JointState, SystemStatus
+from ..protocol.msg_report import ArmPosture, Event, JointState, SystemStatus
 from .stats import McuClock
 
 JOINT_NAMES = ("J0", "J1", "J2", "J3", "J4", "J5", "J6")
@@ -74,6 +74,7 @@ class ArmMirror:
     system: SystemStatus | None = None
     device: DeviceInfo | None = None
     events: list[Event] = field(default_factory=list)
+    posture: ArmPosture | None = None
     max_events: int = 200
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _clock: McuClock = field(default_factory=McuClock, repr=False)
@@ -97,6 +98,8 @@ class ArmMirror:
                 self.events.append(msg)
                 if len(self.events) > self.max_events:
                     del self.events[: len(self.events) - self.max_events]
+            elif isinstance(msg, ArmPosture):
+                self.posture = msg
 
     def _apply_joint_state(self, m: JointState, host_time_ns: int) -> None:
         a = self.arm
@@ -130,7 +133,8 @@ class ArmMirror:
 
     def snapshot(self) -> "ArmMirror":
         with self._lock:
-            return ArmMirror(copy.deepcopy(self.arm), self.system, self.device, list(self.events))
+            return ArmMirror(copy.deepcopy(self.arm), self.system, self.device, list(self.events),
+                             self.posture)
 
     def format_c(self) -> str:
         """按固件变量名打印，便于和 Keil Watch 窗口逐项对照。"""

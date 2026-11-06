@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from armhost.protocol import MAX_FRAME, MAX_PAYLOAD, PROTO_VERSION, MsgType  # noqa: E402
 from armhost.protocol.enums import (AckResult, EventCode, HostTargetAction, JointFlag, ParamType,  # noqa: E402
                                     StatusFlag)
+from armhost.protocol.msg_cmd import SET_HOST_TARGET_MULTI_TURN  # noqa: E402
 from armhost.protocol.msg_report import JointRecord, JointState, SystemStatus  # noqa: E402
 from armhost.protocol.params import BY_NAME  # noqa: E402
 
@@ -63,6 +64,8 @@ class TestCHeaderSync(unittest.TestCase):
         c = c_enum_seq("ARM_HOST_ACTION_SET_OPEN", [])
         for a in HostTargetAction:
             self.assertEqual(c[f"ARM_HOST_ACTION_{a.name}"], int(a))
+        self.assertEqual(c_value("ARM_HOST_TARGET_FLAG_MULTI_TURN"),
+                         SET_HOST_TARGET_MULTI_TURN)
 
     def test_events(self):
         for e in EventCode:

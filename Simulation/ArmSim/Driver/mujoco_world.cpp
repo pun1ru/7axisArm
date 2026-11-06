@@ -2,7 +2,6 @@
 
 #include <mujoco/mujoco.h>
 
-#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -18,7 +17,6 @@ void LogWarning(const char *msg)
 }  // namespace
 
 MujocoWorld::MujocoWorld(const Config &config)
-    : torque_limit_nm_(config.torque_limit_nm > 0.0 ? config.torque_limit_nm : 100.0)
 {
     char err[1024] = {};
 
@@ -29,7 +27,7 @@ MujocoWorld::MujocoWorld(const Config &config)
     }
 
     /* armature / damping / frictionloss 是电机侧的模型，不在 URDF 里。
-     * 远端关节惯量很小（J6 约 1.5e-5 kg*m^2），不加时力矩控制会抖、会慢漂。 */
+     * 远端关节惯量很小，不加时力矩控制会抖、会慢漂。 */
     for (int i = 0; i < model_->nv; ++i)
     {
         if (config.joint_armature > 0.0)
@@ -53,29 +51,6 @@ MujocoWorld::MujocoWorld(const Config &config)
         throw std::runtime_error("mj_makeData failed");
     }
 
-    /* 约定关节名 joint1..jointN，找不到就认为链结束 */
-    for (int i = 0; i < kMaxJoints; ++i)
-    {
-        const std::string name = "joint" + std::to_string(i + 1);
-        const int jid = mj_name2id(model_, mjOBJ_JOINT, name.c_str());
-
-        if (jid < 0)
-        {
-            break;
-        }
-        qpos_adr_[i] = model_->jnt_qposadr[jid];
-        dof_adr_[i] = model_->jnt_dofadr[jid];
-        joint_count_ = i + 1;
-    }
-    if (joint_count_ == 0)
-    {
-        mj_deleteData(data_);
-        mj_deleteModel(model_);
-        throw std::runtime_error(config.xml_path + " has no joint1..jointN");
-    }
-
-    tcp_site_id_ = mj_name2id(model_, mjOBJ_SITE, "tcp");
-
     mju_user_warning = LogWarning;
     mj_forward(model_, data_);
 }
@@ -94,29 +69,58 @@ void MujocoWorld::Step()
     data_->warning[0].number = 0;
 }
 
-double MujocoWorld::JointAngleRad(int joint) const
+int MujocoWorld::BindJoint(const std::string &name)
 {
-    return JointValid(joint) ? data_->qpos[qpos_adr_[joint]] : 0.0;
+    const int jid = mj_name2id(model_, mjOBJ_JOINT, name.c_str());
+
+    if (jid < 0)
+    {
+        throw std::runtime_error("model has no joint \"" + name + "\"");
+    }
+    joint_.push_back({model_->jnt_qposadr[jid], model_->jnt_dofadr[jid]});
+    return static_cast<int>(joint_.size()) - 1;
 }
 
-double MujocoWorld::JointVelocityRad(int joint) const
+double MujocoWorld::JointPosition(int handle) const
 {
-    return JointValid(joint) ? data_->qvel[dof_adr_[joint]] : 0.0;
+    return data_->qpos[joint_.at(handle).qpos];
 }
 
-double MujocoWorld::SetJointTorque(int joint, double torque_nm)
+double MujocoWorld::JointVelocity(int handle) const
 {
-    if (!JointValid(joint))
+    return data_->qvel[joint_.at(handle).dof];
+}
+
+void MujocoWorld::SetJointForce(int handle, double force)
+{
+    data_->qfrc_applied[joint_.at(handle).dof] = std::isnan(force) ? 0.0 : force;
+}
+
+MujocoWorld::Inertial MujocoWorld::BodyInertial(const std::string &body, bool in_parent) const
+{
+    const int id = mj_name2id(model_, mjOBJ_BODY, body.c_str());
+    Inertial out;
+
+    if (id < 0)
     {
-        return 0.0;
+        throw std::runtime_error("model has no body \"" + body + "\"");
     }
-    if (std::isnan(torque_nm))
+    out.mass_kg = model_->body_mass[id];
+
+    mjtNum com[3] = {model_->body_ipos[3 * id], model_->body_ipos[3 * id + 1],
+                     model_->body_ipos[3 * id + 2]};
+    if (in_parent)
     {
-        torque_nm = 0.0;
+        /* 父坐标系下 = body_pos + R(body_quat) * ipos（q=0 时的参考位姿） */
+        mjtNum rotated[3];
+        mju_rotVecQuat(rotated, com, model_->body_quat + 4 * id);
+        for (int i = 0; i < 3; ++i)
+        {
+            com[i] = model_->body_pos[3 * id + i] + rotated[i];
+        }
     }
-    torque_nm = std::clamp(torque_nm, -torque_limit_nm_, torque_limit_nm_);
-    data_->qfrc_applied[dof_adr_[joint]] = torque_nm;
-    return torque_nm;
+    out.com_m = {com[0], com[1], com[2]};
+    return out;
 }
 
 double MujocoWorld::time() const
@@ -129,12 +133,14 @@ double MujocoWorld::timestep() const
     return model_->opt.timestep;
 }
 
-std::optional<std::array<double, 3>> MujocoWorld::TcpPosition() const
+std::optional<std::array<double, 3>> MujocoWorld::SitePosition(const std::string &site) const
 {
-    if (tcp_site_id_ < 0)
+    const int id = mj_name2id(model_, mjOBJ_SITE, site.c_str());
+
+    if (id < 0)
     {
         return std::nullopt;
     }
-    const mjtNum *p = data_->site_xpos + 3 * tcp_site_id_;
+    const mjtNum *p = data_->site_xpos + 3 * id;
     return std::array<double, 3>{p[0], p[1], p[2]};
 }

@@ -21,9 +21,9 @@ from typing import Any, Callable
 
 from ..protocol import (Ack, AckResult, ClearTorque, DecodeError, DeviceInfo, DeviceInfoReq,
                         Estop, EstopAction, Frame, FrameFlag, FrameParser, Heartbeat, MsgType,
-                        ParamRead, ParamValue, ParamWrite, SetHostTarget, SetJointTorque,
-                        TorqueItem, decode_frame, encode_frame)
-from ..protocol.enums import HostTargetAction, ParamType
+                        ParamRead, ParamValue, ParamWrite, SetHostTarget, SetIkTarget,
+                        SetJointTorque, TorqueItem, decode_frame, encode_frame)
+from ..protocol.enums import HostIkAction, HostTargetAction, ParamType
 from ..protocol.params import BY_ID
 from .hexlog import HexLog
 from .mirror import ArmMirror
@@ -155,11 +155,24 @@ class ArmLink:
         return self._request(ClearTorque(joint_mask))
 
     def set_host_target(self, joint: int, target_deg: float, closed_loop: bool = False) -> Future:
+        """target_deg 是多圈关节目标；旧 Host 不设置 flags，由固件按单圈绝对角兼容。"""
         action = HostTargetAction.SET_CLOSED if closed_loop else HostTargetAction.SET_OPEN
-        return self._request(SetHostTarget(int(joint), action, float(target_deg)), retries=0)
+        return self._request(SetHostTarget(int(joint), action, float(target_deg),
+                                          multi_turn=True), retries=0)
 
     def stop_host_loops(self) -> Future:
         return self._request(SetHostTarget(0, HostTargetAction.STOP_ALL, 0.0), retries=0)
+
+    def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
+                      pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
+                      cost_weights: tuple[float, ...] | None = None) -> Future:
+        weights = cost_weights if cost_weights is not None else (1.0,) * 7
+        return self._request(SetIkTarget(HostIkAction.SET, int(branch), float(x), float(y), float(z),
+                                         float(roll), float(pitch), float(yaw), float(psi_deg),
+                                         bool(auto_psi), tuple(weights)), retries=0)
+
+    def stop_ik(self) -> Future:
+        return self._request(SetIkTarget(HostIkAction.STOP), retries=0)
 
     def estop(self, latch: bool = True) -> Future:
         return self._request(Estop(EstopAction.LATCH if latch else EstopAction.RELEASE))

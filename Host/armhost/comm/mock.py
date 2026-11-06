@@ -17,12 +17,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from ..protocol import (Ack, AckResult, ArmRole, ArmState, CanBusStatus, ClearTorque, DeviceInfo,
-                        DeviceInfoReq, Estop, EstopAction, Event, EventCode, FrameParser,
+from ..protocol import (Ack, AckResult, ArmPosture, ArmRole, ArmState, CanBusStatus, ClearTorque,
+                        DeviceInfo, DeviceInfoReq, Estop, EstopAction, Event, EventCode, FrameParser,
                         Heartbeat, JointFlag, JointRecord, JointState, MotorStatus, ParamRead,
-                        ParamValue, ParamWrite, SetHostTarget, SetJointTorque, Severity, StatusFlag,
-                        SystemStatus, decode_frame, encode_frame)
-from ..protocol.enums import HostTargetAction, ParamType
+                        ParamValue, ParamWrite, SetHostTarget, SetIkTarget, SetJointTorque, Severity,
+                        StatusFlag, SystemStatus, decode_frame, encode_frame)
+from ..protocol.enums import HostIkAction, HostTargetAction, ParamType, PostureFlag
 from ..protocol.params import BY_ID, W
 
 try:
@@ -35,6 +35,10 @@ _DH = [(0.0, 0.0, 0.0626, 0.0), (90.0, 0.0, 0.0, 0.0), (90.0, 0.0, -0.148, 0.0),
        (90.0, 0.0, 0.0, 0.0), (90.0, 0.0, 0.1, 0.0), (90.0, 0.0, 0.0, 0.0), (90.0, 0.0, 0.0, 0.0)]
 _ZERO = [4108, 19268, 6740, 21635, 26560, 32676, 65112]
 _DIR = [1, 1, -1, 1, 1, 1, -1]
+
+
+def _wrap_deg(angle_deg: float) -> float:
+    return (angle_deg + 180.0) % 360.0 - 180.0
 
 
 @dataclass
@@ -78,6 +82,11 @@ class SimDevice:
         self.arm_state = ArmState.ENABLE
         self.host_closed_loop_mask = 0
         self.host_target_valid_mask = 0
+        self.ik_branch = 0
+        self.ik_psi_deg = 0.0
+        self.ik_auto_psi = False
+        self.ik_cost_weights = (1.0,) * 7
+        self.ik_pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.rc_online = True
         self.estop = False
         self.mute = False                 # True 时停止一切输出（模拟设备卡死）
@@ -98,7 +107,10 @@ class SimDevice:
         self.rx_frames_ok = 0
         self.received: list = []               # 收到的消息（测试用）
         self.gain = {k: [0.0] * joint_count for k in range(0x0200, 0x0206)}
-        self.limit = {0x0102: [-180.0] * joint_count, 0x0103: [180.0] * joint_count}
+        self.limit = {
+            0x0102: [-90.0, -20.0, -175.0, -110.0, -175.0, -120.0, -175.0],
+            0x0103: [90.0, 175.0, 175.0, 110.0, 175.0, 70.0, 175.0],
+        }
 
     # ------------------------------------------------------------ 线程
     def start(self) -> None:
@@ -134,6 +146,7 @@ class SimDevice:
                     self._physics(period, tick)
                     self._emit(self._joint_state(tick))
                     if k % status_div == 0:
+                        self._emit(self._posture_state(tick))
                         self._emit(self._system_status(tick))
                 k += 1
                 tick += period
@@ -150,6 +163,8 @@ class SimDevice:
                     j.host_tau = 0.0
                     j.host_deadline = 0.0
                 self.host_closed_loop_mask = 0
+                if self.arm_state == ArmState.HOST_IK:
+                    self.arm_state = ArmState.HOST
             self._link_ok = link_ok
             self._emit(Event(self._us(), EventCode.HOST_LINK_RESTORED if link_ok else EventCode.HOST_LINK_LOST,
                              Severity.INFO if link_ok else Severity.WARN, 0, 0))
@@ -177,7 +192,7 @@ class SimDevice:
             extra = j.q - getattr(j, "_base", 0.0)
             extra += j.dq * dt
             loop_active = bool(self.host_closed_loop_mask & (1 << i))
-            if self.arm_state == ArmState.HOST and loop_active and self.rc_online:
+            if self.arm_state in (ArmState.HOST, ArmState.HOST_IK) and loop_active and self.rc_online:
                 error = j.host_target - j.q
                 extra += max(-60.0 * dt, min(60.0 * dt, error))
                 host_cmd = max(-j.host_limit, min(j.host_limit, error * 0.02))
@@ -197,7 +212,7 @@ class SimDevice:
             f |= StatusFlag.ESTOP_LATCHED
         if any(self._host_tau_active(j, now) for j in self.joints):
             f |= StatusFlag.HOST_TORQUE_ACTIVE
-        if self.arm_state == ArmState.HOST and self.host_closed_loop_mask:
+        if self.arm_state in (ArmState.HOST, ArmState.HOST_IK) and self.host_closed_loop_mask:
             f |= StatusFlag.HOST_CLOSED_LOOP
         return f
 
@@ -209,18 +224,43 @@ class SimDevice:
                 jf |= JointFlag.HOST_TORQUE_VALID
             if j.clamped:
                 jf |= JointFlag.TORQUE_CLAMPED
-            if self.arm_state == ArmState.HOST and self.host_target_valid_mask & (1 << i):
+            if self.arm_state in (ArmState.HOST, ArmState.HOST_IK) and self.host_target_valid_mask & (1 << i):
                 jf |= JointFlag.HOST_TARGET_VALID
-            if self.arm_state == ArmState.HOST and self.host_closed_loop_mask & (1 << i):
+            if self.arm_state in (ArmState.HOST, ArmState.HOST_IK) and self.host_closed_loop_mask & (1 << i):
                 jf |= JointFlag.HOST_CLOSED_LOOP
             enc = (_ZERO[i % 7] + int(_DIR[i % 7] * j.q / 360.0 * 65536)) & 0xFFFF
             recs.append(JointRecord(round(j.q, 4), getattr(j, "_dq_total", 0.0), j.tau_fb, j.q,
                                     getattr(j, "_applied", 0.0), enc,
-                                    MotorStatus.ENABLED if self.arm_state in (ArmState.ENABLE, ArmState.HOST)
+                                    MotorStatus.ENABLED if self.arm_state in (
+                                        ArmState.ENABLE, ArmState.HOST, ArmState.HOST_IK)
                                     else MotorStatus.DISABLED,
                                     0, 35 + i, jf, int(now * self.state_rate_hz) & 0xFFFF))
         age = min(0xFFFF, max(0, int((now - self._last_cmd) * 1000))) if self._last_cmd else 0xFFFF
         return JointState(self._tick_us(now), self.arm_state, self._flags(now), age, recs)
+
+    def _posture_state(self, now: float) -> ArmPosture:
+        angles = [j.q + _DH[i][3] for i, j in enumerate(self.joints)]
+        branch = ((1 if math.sin(math.radians(angles[1])) < 0 else 0) |
+                  (2 if math.sin(math.radians(angles[3])) < 0 else 0) |
+                  (4 if math.sin(math.radians(angles[5])) < 0 else 0))
+        flags = PostureFlag.VALID
+        if self.arm_state == ArmState.HOST_IK:
+            flags |= PostureFlag.IK_ACTIVE
+            if self.ik_auto_psi:
+                flags |= PostureFlag.AUTO_PSI
+            branch = self.ik_branch
+            pose = self.ik_pose
+            psi = self.ik_psi_deg
+        else:
+            try:
+                from ..kinematics.dh import DHTable, DHRow, euler_zyx_deg, forward_frames
+                table = DHTable([DHRow(*row) for row in _DH])
+                tf = forward_frames(table, [j.q for j in self.joints])[-1]
+                pose = (float(tf[0, 3]), float(tf[1, 3]), float(tf[2, 3]), *euler_zyx_deg(tf[:3, :3]))
+            except Exception:
+                pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            psi = 0.0
+        return ArmPosture(branch, flags, psi, *pose)
 
     def _tick_us(self, t: float) -> int:
         return int((t - self._t0) * 1e6) & 0xFFFFFFFF
@@ -321,6 +361,8 @@ class SimDevice:
         if isinstance(m, SetHostTarget):
             if m.action == HostTargetAction.STOP_ALL:
                 self.host_closed_loop_mask = 0
+                if self.arm_state == ArmState.HOST_IK:
+                    self.arm_state = ArmState.HOST
                 self._last_cmd = now
                 return Ack(seq, m.TYPE, AckResult.OK, 0)
             if self.arm_state != ArmState.HOST or m.action not in (
@@ -328,15 +370,55 @@ class SimDevice:
                 return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
             if not 0 <= m.joint < self.n or not math.isfinite(m.target_deg):
                 return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
-            lo, hi = self.limit[0x0102][m.joint], self.limit[0x0103][m.joint]
-            if not lo <= m.target_deg <= hi:
-                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
-            self.joints[m.joint].host_target = float(m.target_deg)
+            joint = self.joints[m.joint]
+            abs_deg = _wrap_deg(joint.q)
+            limit_min_abs = self.limit[0x0102][m.joint]
+            limit_max_abs = self.limit[0x0103][m.joint]
+            limit_min_multi = joint.q + (limit_min_abs - abs_deg)
+            limit_max_multi = joint.q + (limit_max_abs - abs_deg)
+            if m.multi_turn:
+                target_deg = float(m.target_deg)
+                if not limit_min_multi <= target_deg <= limit_max_multi:
+                    return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            else:
+                if not limit_min_abs <= m.target_deg <= limit_max_abs:
+                    return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+                target_deg = joint.q + (m.target_deg - abs_deg)
+                target_deg = max(limit_min_multi, min(limit_max_multi, target_deg))
+            joint.host_target = target_deg
             self.host_target_valid_mask |= 1 << m.joint
             if m.action == HostTargetAction.SET_CLOSED:
                 self.host_closed_loop_mask |= 1 << m.joint
             else:
                 self.host_closed_loop_mask &= ~(1 << m.joint)
+            self._last_cmd = now
+            return Ack(seq, m.TYPE, AckResult.OK, 0)
+        if isinstance(m, SetIkTarget):
+            if m.action == HostIkAction.STOP:
+                self.host_closed_loop_mask = 0
+                if self.arm_state == ArmState.HOST_IK:
+                    self.arm_state = ArmState.HOST
+                self._last_cmd = now
+                return Ack(seq, m.TYPE, AckResult.OK, 0)
+            if self.arm_state not in (ArmState.HOST, ArmState.HOST_IK):
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            values = (m.x, m.y, m.z, m.roll, m.pitch, m.yaw, m.psi_deg)
+            if not 0 <= m.branch < 8 or not all(math.isfinite(v) for v in values):
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            if not all(math.isfinite(v) and v >= 0.0 for v in m.cost_weights) \
+                    or (m.auto_psi and sum(m.cost_weights) <= 0.0):
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
+            if self.arm_state == ArmState.HOST:
+                for i, joint in enumerate(self.joints):
+                    joint.host_target = joint.q
+                    self.host_target_valid_mask |= 1 << i
+            self.arm_state = ArmState.HOST_IK
+            self.host_closed_loop_mask = (1 << self.n) - 1
+            self.ik_branch = m.branch
+            self.ik_pose = values[:6]
+            self.ik_psi_deg = m.psi_deg
+            self.ik_auto_psi = bool(m.auto_psi)
+            self.ik_cost_weights = tuple(m.cost_weights)
             self._last_cmd = now
             return Ack(seq, m.TYPE, AckResult.OK, 0)
         if isinstance(m, ClearTorque):
