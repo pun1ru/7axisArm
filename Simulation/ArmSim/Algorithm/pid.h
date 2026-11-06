@@ -1,28 +1,31 @@
-#ifndef _PID_H_
-#define _PID_H_
+#pragma once
 
-#include <stdint.h>
+/* 位置式 PID，带 D 项低通和积分、输出限幅。与实机 LibSE/Algorithm/PID 的数值行为一致。
+ * 误差和输出的单位由调用方约定（这里是 deg -> N*m）。 */
+class Pid {
+public:
+    struct Gain {
+        float kp = 0.0f;
+        float ki = 0.0f;
+        float kd = 0.0f;
+        float d_alpha = 0.0f;        // D 项低通系数 [0, 1)，0 = 不滤波
+        float sum_error_max = 0.0f;  // 积分限幅
+        float output_max = 0.0f;     // 输出限幅
+    };
 
-#define limiter(val, max) ((val) < (-(max)) ? (-(max)) : ((val) > (max) ? (max) : (val)))
+    Pid() = default;
+    explicit Pid(const Gain &gain) : gain_(gain) {}
 
-/// @brief pid 计算结构体（与 Real/DIYcontroller 的实现保持一致）
-typedef struct {
-	float kp, ki, kd;
-	float cur_error, last_error, last_last_error, sum_error;
-	float output;
-	float deriv_filtered;   // D 项低通后的值
-	float d_alpha;          // D 项低通系数 [0, 1)，0 = 不滤波
-	float sum_error_max, output_max;
-} PIDStruct;
+    float Update(float error);
+    void Reset();
 
-void PIDReset(PIDStruct *const pid);
-void PIDInitialize(PIDStruct *const pid, float kp, float ki, float kd, float d_alpha,
-                   float sum_error_max, float output_max);
-float PIDUpdate(PIDStruct *const pid, const float error);
-float PIDUpdatePrior(PIDStruct pid, const float error);
+    float output() const { return output_; }
 
-/*optimize pid compute*/
-float PIDUpdateIntergrateSeparation(PIDStruct *const pid, const float error, const float error_limit);
-float PIDUpdateIncrement(PIDStruct *const pid, float current_error);
-
-#endif
+private:
+    Gain gain_;
+    float cur_error_ = 0.0f;
+    float last_error_ = 0.0f;
+    float sum_error_ = 0.0f;
+    float deriv_filtered_ = 0.0f;
+    float output_ = 0.0f;
+};

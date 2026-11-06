@@ -1,86 +1,31 @@
-#include <math.h>
-
 #include "pid.h"
 
-void PIDInitialize(PIDStruct *const pid, float kp, float ki, float kd, float d_alpha,
-                   float sum_error_max, float output_max)
+namespace {
+
+float Limit(float value, float max)
 {
-	pid->kp = kp;
-	pid->ki = ki;
-	pid->kd = kd;
-	pid->d_alpha = d_alpha;
-
-	pid->cur_error = 0;
-	pid->last_error = 0;
-	pid->last_last_error = 0;
-	pid->deriv_filtered = 0;
-	pid->sum_error = 0;
-	pid->output = 0;
-
-	pid->sum_error_max = sum_error_max;
-	pid->output_max = output_max;
+    return value < -max ? -max : (value > max ? max : value);
 }
 
-// 滤波更新
-static float PIDFilteredDerivative(PIDStruct *const pid)
+}  // namespace
+
+float Pid::Update(float error)
 {
-	pid->deriv_filtered = pid->deriv_filtered * pid->d_alpha +
-	                      (pid->cur_error - pid->last_error) * (1.0f - pid->d_alpha);
-	return pid->deriv_filtered;
+    last_error_ = cur_error_;
+    cur_error_ = error;
+    sum_error_ = Limit(sum_error_ + cur_error_, gain_.sum_error_max);
+    deriv_filtered_ = deriv_filtered_ * gain_.d_alpha +
+                      (cur_error_ - last_error_) * (1.0f - gain_.d_alpha);
+    output_ = Limit(gain_.kp * cur_error_ + gain_.ki * sum_error_ + gain_.kd * deriv_filtered_,
+                    gain_.output_max);
+    return output_;
 }
 
-float PIDUpdate(PIDStruct *const pid, const float error)
+void Pid::Reset()
 {
-	pid->last_error = pid->cur_error;
-	pid->cur_error = error;
-	pid->sum_error += pid->cur_error;
-	pid->sum_error = limiter(pid->sum_error, pid->sum_error_max);
-	pid->output = pid->kp * pid->cur_error +
-	              pid->ki * pid->sum_error +
-	              pid->kd * PIDFilteredDerivative(pid);
-	return pid->output = limiter(pid->output, pid->output_max);
-}
-
-float PIDUpdatePrior(PIDStruct pid, const float error)
-{
-	return PIDUpdate(&pid, error);
-}
-
-// 积分分离版 pid，大误差不累计 i 项
-float PIDUpdateIntergrateSeparation(PIDStruct *const pid, const float error, const float error_limit)
-{
-	pid->last_error = pid->cur_error;
-	pid->cur_error = error;
-	if (fabsf(error) < fabsf(error_limit))
-	{
-		pid->sum_error += pid->cur_error;
-		pid->sum_error = limiter(pid->sum_error, pid->sum_error_max);
-	}
-	pid->output = pid->kp * pid->cur_error +
-	              pid->ki * pid->sum_error +
-	              pid->kd * PIDFilteredDerivative(pid);
-	return pid->output = limiter(pid->output, pid->output_max);
-}
-
-// 增量式 pid
-float PIDUpdateIncrement(PIDStruct *const pid, float current_error)
-{
-	pid->last_last_error = pid->last_error;
-	pid->last_error = pid->cur_error;
-	pid->cur_error = current_error;
-	pid->output = pid->kp * (pid->cur_error - pid->last_error) +
-	              pid->ki * pid->cur_error +
-	              pid->kd * (pid->cur_error - 2 * pid->last_error + pid->last_last_error);
-	pid->output = limiter(pid->output, pid->output_max);
-	return pid->output;
-}
-
-void PIDReset(PIDStruct *const pid)
-{
-	pid->cur_error = 0;
-	pid->last_error = 0;
-	pid->last_last_error = 0;
-	pid->sum_error = 0;
-	pid->deriv_filtered = 0;
-	pid->output = 0;
+    cur_error_ = 0.0f;
+    last_error_ = 0.0f;
+    sum_error_ = 0.0f;
+    deriv_filtered_ = 0.0f;
+    output_ = 0.0f;
 }

@@ -1,75 +1,83 @@
-#ifndef HOST_H
-#define HOST_H
+#pragma once
 
-#include <stdbool.h>
-#include <stdint.h>
+#include <array>
+#include <cstdint>
 
 #include "arm.h"
 #include "host_link.h"
 
-/* Module 层：上位机协议桥，帧格式、消息号、参数号与实机
+/* 上位机协议桥，帧格式、消息号、参数号与实机
  * Real/DIYcontroller/LibSE/Module/Host/host.c 相同，PC 端 Host/armhost 无需修改。
  *
  *   帧   A5 5A | ver | type | seq(2) | len | flags | crc8 | payload | crc16     小端
  *   上行 JOINT_STATE 周期上报，另有 ACK / PARAM_VALUE / DEVICE_INFO 应答
  *   下行 HEARTBEAT / DEVICE_INFO_REQ / PARAM_READ / SET_HOST_TARGET
  *
- * 与实机的差别：没有 UART 中断，Host_Run 在任务里轮询链路；应答直接写链路，
- * 不排队。已实现的消息就这几条，其余（力矩直控、急停、参数写）回 UNSUPPORTED。 */
-#define HOST_FRAME_SOF0             0xA5U
-#define HOST_FRAME_SOF1             0x5AU
-#define HOST_FRAME_VERSION          0x10U
-#define HOST_FRAME_HEADER_SIZE      9U
-#define HOST_FRAME_OVERHEAD         11U
-#define HOST_FRAME_MAX_SIZE         256U
+ * 与实机的差别：没有 UART 中断，Step 在循环里轮询链路；应答直接写链路，不排队。
+ * 已实现的消息就这几条，其余（力矩直控、急停、参数写）回 UNSUPPORTED。 */
+class Host {
+public:
+    /* state_divider：每 N 次 Step 上报一次 JOINT_STATE */
+    Host(Arm &arm, HostLink &link, uint16_t state_divider);
 
-#define HOST_MSG_HEARTBEAT          0x01U
-#define HOST_MSG_DEVICE_INFO_REQ    0x02U
-#define HOST_MSG_DEVICE_INFO        0x03U
-#define HOST_MSG_ACK                0x04U
-#define HOST_MSG_JOINT_STATE        0x10U
-#define HOST_MSG_SET_HOST_TARGET    0x23U
-#define HOST_MSG_PARAM_READ         0x28U
-#define HOST_MSG_PARAM_VALUE        0x2AU
+    /* 每个控制周期调一次：收帧 -> 执行命令并应答 -> 掉线保护 -> 周期上报。
+     * sim_time_s 是仿真时间（写进上报帧）；wall_ms 是墙钟毫秒（判链路超时，
+     * 因为上位机是真实时间，--fast 下仿真时间不能拿来判超时） */
+    void Step(double sim_time_s, uint32_t wall_ms);
 
-#define HOST_LINK_TIMEOUT_MS        300U    /* 超时无帧则退出上位机闭环 */
+private:
+    static constexpr size_t kFrameMaxSize = 256;
+    static constexpr size_t kReplyCacheSize = 8;
 
-typedef struct {
-    HostLink_t *link;
-    uint16_t state_divider;        /* 每 N 个 Host_Run 上报一次 JOINT_STATE */
-} HostConfig_t;
+    struct Request {
+        uint16_t seq;
+        uint8_t type;
+        uint8_t flags;
+        uint8_t length;
+        const uint8_t *payload;
+    };
 
-typedef struct {
-    uint16_t seq;
-    uint8_t request_type;
-    uint8_t reply_type;
-    uint8_t length;
-    uint8_t payload[28];
-} HostReply_t;
+    struct Reply {
+        uint16_t seq;
+        uint8_t request_type;
+        uint8_t reply_type;
+        uint8_t length;
+        std::array<uint8_t, 28> payload;
+    };
 
-typedef struct {
-    HostConfig_t config;
-    Arm_t *arm;
-    uint16_t divider_count;
-    uint16_t sequence;
-    uint32_t last_rx_ms;
-    uint32_t last_cmd_ms;
-    uint8_t ever_rx;
-    uint8_t ever_cmd;
-    uint8_t rx_buffer[2U * HOST_FRAME_MAX_SIZE];
-    uint16_t rx_length;
-    HostReply_t replies[8];        /* 重复请求（同 type + seq）重放上次应答 */
-    uint8_t reply_head;
-    uint8_t reply_count;
-} Host_t;
+    // 发送
+    void SendFrame(uint8_t type, const uint8_t *payload, uint8_t length);
+    void SendReply(const Request &req, uint8_t reply_type, const uint8_t *payload, uint8_t length);
+    void Ack(const Request &req, uint8_t result);
+    void SendJointState(double sim_time_s, uint32_t now_ms);
+    void PackJoint(int joint, uint8_t *out) const;
 
-void Host_Init(Host_t *host, const HostConfig_t *config, Arm_t *arm);
-/* 每个任务周期调一次：收帧 -> 执行命令并应答 -> 掉线保护 -> 周期上报。
- * sim_time_s 是仿真时间（写进上报帧）；wall_ms 是墙钟毫秒（判链路超时，
- * 因为上位机是真实时间，--fast 下仿真时间不能拿来判超时） */
-void Host_Run(Host_t *host, double sim_time_s, uint32_t wall_ms);
+    // 命令
+    void ProcessRequest(const Request &req, uint32_t now_ms);
+    void ProcessParamRead(const Request &req);
+    void ProcessDeviceInfo(const Request &req);
+    void ProcessSetTarget(const Request &req, uint32_t now_ms);
+    void ParamValue(uint16_t id, uint8_t index, uint8_t *value) const;
 
-uint8_t Host_Crc8(const uint8_t *data, uint16_t length);
-uint16_t Host_Crc16(const uint8_t *data, uint16_t length);
+    // 收帧
+    void DropRx(size_t count);
+    void ParseRx(uint32_t now_ms);
 
-#endif
+    uint16_t StateRateHz() const;
+    bool LinkOk(uint32_t now_ms) const;
+
+    Arm &arm_;
+    HostLink &link_;
+    uint16_t state_divider_;
+    uint16_t divider_count_ = 0;
+    uint16_t sequence_ = 0;
+    uint32_t last_rx_ms_ = 0;
+    uint32_t last_cmd_ms_ = 0;
+    bool ever_rx_ = false;
+    bool ever_cmd_ = false;
+    std::array<uint8_t, 2 * kFrameMaxSize> rx_buffer_{};
+    size_t rx_length_ = 0;
+    std::array<Reply, kReplyCacheSize> replies_{};   // 重复请求（同 type + seq）重放上次应答
+    size_t reply_head_ = 0;
+    size_t reply_count_ = 0;
+};

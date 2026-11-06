@@ -16,23 +16,19 @@ find_library(MUJOCO_LIBRARY NAMES mujoco
 add_executable(armsim
     main.cpp
     Algorithm/pid.cpp
-    Algorithm/dh.cpp
+    Algorithm/kinematics.cpp
     Algorithm/gravity.cpp
-    Driver/motor.cpp
+    Driver/mujoco_world.cpp
     Driver/host_link.cpp
     Module/arm.cpp
     Module/host.cpp
-    System/sim_plant.cpp
-    System/system.cpp
 )
 
 target_include_directories(armsim PRIVATE
     "${MUJOCO_INCLUDE_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/Algorithm"
     "${CMAKE_CURRENT_SOURCE_DIR}/Driver"
     "${CMAKE_CURRENT_SOURCE_DIR}/Module"
-    "${CMAKE_CURRENT_SOURCE_DIR}/System"
 )
 
 target_compile_definitions(armsim PRIVATE
