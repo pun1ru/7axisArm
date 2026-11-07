@@ -2,3 +2,6 @@
 	path = Real/DIYcontroller
 	url = https://github.com/pun1ru/dm_mcV610.git
 	branch = 7axisarm
+[submodule "opensource/rmuc2027_mjarena"]
+	path = opensource/rmuc2027_mjarena
+	url = /tmp/rmuc2027_mjarena.sIEcp2
