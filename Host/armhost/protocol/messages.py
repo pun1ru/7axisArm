@@ -5,14 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .frame import Frame
-from .msg_cmd import (ClearTorque, Estop, ParamRead, ParamValue, ParamWrite, SetHostTarget,
-                      SetIkTarget, SetJointTorque, TorqueItem)
+from .msg_cmd import (ClearTorque, Estop, ExchangeCommand, ParamRead, ParamValue, ParamWrite,
+                      SetHostTarget, SetIkTarget, SetJointTorque, TorqueItem)
 from .msg_link import DecodeError, DeviceInfo, DeviceInfoReq, Heartbeat
-from .msg_report import Ack, ArmPosture, CanBusStatus, Event, JointRecord, JointState, SystemStatus
+from .msg_report import (Ack, ArmPosture, CanBusStatus, Event, ExchangeState, JointRecord,
+                         JointState, SystemStatus)
 
 MESSAGE_CLASSES = (Heartbeat, DeviceInfoReq, DeviceInfo, Ack, JointState, SystemStatus, Event,
                    ArmPosture, SetJointTorque, ClearTorque, Estop, SetHostTarget, SetIkTarget,
-                   ParamRead, ParamWrite, ParamValue)
+                   ParamRead, ParamWrite, ParamValue, ExchangeCommand, ExchangeState)
 REGISTRY = {int(c.TYPE): c for c in MESSAGE_CLASSES}
 
 
@@ -39,7 +40,8 @@ def decode_frame(frame: Frame):
 
 __all__ = [
     "Ack", "ArmPosture", "CanBusStatus", "ClearTorque", "DecodeError", "DeviceInfo",
-    "DeviceInfoReq", "Estop", "Event", "Heartbeat", "JointRecord", "JointState",
+    "DeviceInfoReq", "Estop", "Event", "ExchangeCommand", "ExchangeState", "Heartbeat",
+    "JointRecord", "JointState",
     "MESSAGE_CLASSES", "ParamRead", "ParamValue", "ParamWrite", "REGISTRY", "RawMessage",
     "SetHostTarget", "SetIkTarget", "SetJointTorque", "SystemStatus",
     "TorqueItem", "decode_frame", "decode_payload",

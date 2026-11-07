@@ -1,0 +1,35 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mujoco model="rmuc2027_view">
+  <compiler angle="radian" autolimits="true" fusestatic="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <statistic center="0 1.624 -0.042" extent="20"/>
+  <visual>
+    <global offwidth="1400" offheight="900"/>
+  </visual>
+  <default>
+    <default class="visual">
+      <geom contype="0" conaffinity="0" group="2" rgba="0.65 0.68 0.72 1"/>
+    </default>
+  </default>
+
+  <!-- Display-only arena: the full collision model lives in rmuc2027_mjarena. -->
+  <include file="../../../opensource/rmuc2027_mjarena/rmuc2027_mjarena/arena_mjcf/visual_assets.xml"/>
+
+  <worldbody>
+    <light name="rmuc2027_key" pos="0 0 12" dir="0 0 -1" directional="true"
+           diffuse=".6 .6 .6" specular=".15 .15 .15" castshadow="true"/>
+    <include file="../../../opensource/rmuc2027_mjarena/rmuc2027_mjarena/arena_mjcf/visual_geoms.xml"/>
+
+    <body name="rmuc2027_dock_positive_xy" pos="1.03237595 1.03237595 1.6"
+          quat="0.9238795325112867 0 0 0.3826834323650898">
+      <geom name="rmuc2027_dock_positive_xy_visual" type="mesh" mesh="rmuc2027_dock_mesh"
+            contype="0" conaffinity="0" group="2" rgba="0.3 0.36 0.42 1"/>
+    </body>
+
+    <body name="rmuc2027_dock_negative_xy" pos="-1.03237595 -1.03237595 1.6"
+          quat="0.9238795325112867 0 0 0.3826834323650898">
+      <geom name="rmuc2027_dock_negative_xy_vi现有工作区已有一批未提交的场地合并与轻量 Viewer 改动，我会在此基础上增量实现，避免覆盖这些修改。下一步先把规则中的可量化尺寸、随机范围与兑换动作定义提取出来，并与 XML 当前尺寸逐项对照sual" type="mesh" mesh="rmuc2027_dock_mesh"
+            contype="0" conaffinity="0" group="2" rgba="0.3 0.36 0.42 1"/>
+    </body>
+  </worldbody>
+</mujoco>

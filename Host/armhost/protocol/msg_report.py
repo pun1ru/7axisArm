@@ -6,8 +6,8 @@ import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from .enums import (AckResult, ArmRole, ArmState, EventCode, JointFlag, MotorStatus,
-                    MsgType, PostureFlag, Severity, StatusFlag)
+from .enums import (AckResult, ArmRole, ArmState, EventCode, ExchangePhase, ExchangeStateFlag,
+                    JointFlag, MotorStatus, MsgType, PostureFlag, Severity, StatusFlag)
 from .msg_link import DecodeError, as_enum, need
 
 
@@ -150,6 +150,72 @@ class ArmPosture:
     @property
     def ik_status(self) -> int:
         return (int(self.flags) >> 4) & 0x03
+
+
+@dataclass(slots=True)
+class ExchangeState:
+    """ArmSim 兑换站状态，共 80 B。
+
+    0 version u8 | 1 phase u8 | 2 difficulty u8 | 3 flags u8 | 4 sim_time_s f32
+    8.. actual pose (x,y,z mm; theta,phi,alpha deg)
+    32.. insert_mm, lift_mm, p_deg, q_deg, q_target_deg
+    52.. target pose (x,y,z mm; theta,phi,alpha deg)
+    76 seed u32
+    """
+    TYPE: ClassVar[int] = MsgType.EXCHANGE_STATE
+    S: ClassVar[struct.Struct] = struct.Struct("<BBBBf17fI")
+    phase: ExchangePhase | int = ExchangePhase.PARKED
+    difficulty: int = 1
+    flags: ExchangeStateFlag | int = ExchangeStateFlag.NONE
+    sim_time_s: float = 0.0
+    x_mm: float = -200.0
+    y_mm: float = 200.0
+    z_mm: float = 800.0
+    theta_deg: float = 0.0
+    phi_deg: float = 90.0
+    alpha_deg: float = 0.0
+    insert_mm: float = 0.0
+    lift_mm: float = 0.0
+    p_deg: float = 0.0
+    q_deg: float = 0.0
+    q_target_deg: float = 0.0
+    target_x_mm: float = -200.0
+    target_y_mm: float = 200.0
+    target_z_mm: float = 800.0
+    target_theta_deg: float = 0.0
+    target_phi_deg: float = 90.0
+    target_alpha_deg: float = 0.0
+    seed: int = 0
+
+    def encode(self) -> bytes:
+        return self.S.pack(1, int(self.phase), int(self.difficulty), int(self.flags),
+                           self.sim_time_s, self.x_mm, self.y_mm, self.z_mm, self.theta_deg,
+                           self.phi_deg, self.alpha_deg, self.insert_mm, self.lift_mm,
+                           self.p_deg, self.q_deg, self.q_target_deg, self.target_x_mm,
+                           self.target_y_mm, self.target_z_mm, self.target_theta_deg,
+                           self.target_phi_deg, self.target_alpha_deg, int(self.seed) & 0xFFFFFFFF)
+
+    @classmethod
+    def decode(cls, p: bytes) -> "ExchangeState":
+        need(p, cls.S.size, "EXCHANGE_STATE")
+        v = list(cls.S.unpack_from(p))
+        if v[0] != 1:
+            raise DecodeError(f"EXCHANGE_STATE version {v[0]} is unsupported")
+        v[1] = as_enum(ExchangePhase, v[1])
+        v[3] = ExchangeStateFlag(v[3])
+        return cls(*v[1:])
+
+    @property
+    def available(self) -> bool:
+        return ExchangeStateFlag.AVAILABLE in ExchangeStateFlag(self.flags)
+
+    @property
+    def moving(self) -> bool:
+        return ExchangeStateFlag.MOVING in ExchangeStateFlag(self.flags)
+
+    @property
+    def complete(self) -> bool:
+        return ExchangeStateFlag.COMPLETE in ExchangeStateFlag(self.flags)
 
 
 @dataclass(slots=True)

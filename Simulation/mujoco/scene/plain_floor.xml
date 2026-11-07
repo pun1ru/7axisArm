@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mujoco model="plain_floor">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <visual>
+    <global offwidth="1400" offheight="900"/>
+  </visual>
+  <asset>
+    <texture name="floor_grid" type="2d" builtin="checker" mark="edge"
+             rgb1="0.20 0.22 0.25" rgb2="0.13 0.15 0.18"
+             markrgb="0.36 0.39 0.43" width="300" height="300"/>
+    <material name="floor_mat" texture="floor_grid" texuniform="true" texrepeat="8 8"/>
+  </asset>
+  <worldbody>
+    <light name="key" pos="0 0 6" dir="0 0 -1" directional="true"
+           diffuse="0.75 0.75 0.75" specular="0.15 0.15 0.15" castshadow="true"/>
+    <light name="fill" pos="-4 -3 4" dir="0.4 0.3 -1" directional="true"
+           diffuse="0.25 0.25 0.25" specular="0 0 0"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="floor_mat"
+          friction="0.8 0.01 0.001"/>
+  </worldbody>
+</mujoco>

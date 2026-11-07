@@ -19,10 +19,11 @@ from dataclasses import dataclass, field
 
 from ..protocol import (Ack, AckResult, ArmPosture, ArmRole, ArmState, CanBusStatus, ClearTorque,
                         DeviceInfo, DeviceInfoReq, Estop, EstopAction, Event, EventCode, FrameParser,
-                        Heartbeat, JointFlag, JointRecord, JointState, MotorStatus, ParamRead,
-                        ParamValue, ParamWrite, SetHostTarget, SetIkTarget, SetJointTorque, Severity,
+                        ExchangeCommand, ExchangePhase, ExchangeState, ExchangeStateFlag, Heartbeat,
+                        JointFlag, JointRecord, JointState, MotorStatus, ParamRead, ParamValue,
+                        ParamWrite, SetHostTarget, SetIkTarget, SetJointTorque, Severity,
                         StatusFlag, SystemStatus, decode_frame, encode_frame)
-from ..protocol.enums import HostIkAction, HostTargetAction, ParamType, PostureFlag
+from ..protocol.enums import ExchangeAction, HostIkAction, HostTargetAction, ParamType, PostureFlag
 from ..protocol.params import BY_ID, W
 
 try:
@@ -87,6 +88,18 @@ class SimDevice:
         self.ik_auto_psi = False
         self.ik_cost_weights = (1.0,) * 7
         self.ik_pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        self.exchange_phase = ExchangePhase.PARKED
+        self.exchange_free = False
+        self.exchange_difficulty = 1
+        self.exchange_pose = [-200.0, 200.0, 800.0, 0.0, 90.0, 0.0]
+        self.exchange_target = list(self.exchange_pose)
+        self.exchange_insert_mm = 0.0
+        self.exchange_lift_mm = 0.0
+        self.exchange_p_deg = 0.0
+        self.exchange_q_deg = 0.0
+        self.exchange_q_target = 0.0
+        self.exchange_seed = 0
+        self.exchange_auto = False
         self.rc_online = True
         self.estop = False
         self.mute = False                 # True 时停止一切输出（模拟设备卡死）
@@ -147,6 +160,7 @@ class SimDevice:
                     self._emit(self._joint_state(tick))
                     if k % status_div == 0:
                         self._emit(self._posture_state(tick))
+                        self._emit(self._exchange_state(tick))
                         self._emit(self._system_status(tick))
                 k += 1
                 tick += period
@@ -271,6 +285,28 @@ class SimDevice:
                             self._flags(now), self.rx_frames_ok, self._parser.stats.crc_errors,
                             self._parser.stats.header_errors + self._parser.stats.length_errors, 0,
                             [0, 0, 0], [CanBusStatus(int(now * 1000), 0, 0, 0, 0) for _ in range(2)])
+
+    def _exchange_state(self, now: float) -> ExchangeState:
+        flags = ExchangeStateFlag.AVAILABLE
+        if self.exchange_phase in (ExchangePhase.MOVING_POSE, ExchangePhase.INSERTING,
+                                   ExchangePhase.LIFTING, ExchangePhase.ROTATING_P,
+                                   ExchangePhase.ROTATING_Q, ExchangePhase.RESETTING):
+            flags |= ExchangeStateFlag.MOVING
+        if self.exchange_phase not in (ExchangePhase.PARKED, ExchangePhase.RESETTING):
+            flags |= ExchangeStateFlag.POSE_VALID
+        if self.exchange_auto:
+            flags |= ExchangeStateFlag.AUTO_DEMO
+        if self.exchange_phase == ExchangePhase.COMPLETE:
+            flags |= ExchangeStateFlag.COMPLETE
+        if self.exchange_phase in (ExchangePhase.Q_READY, ExchangePhase.COMPLETE):
+            flags |= ExchangeStateFlag.Q_READY
+        if self.exchange_free:
+            flags |= ExchangeStateFlag.FREE
+        return ExchangeState(
+            self.exchange_phase, self.exchange_difficulty, flags, now - self._t0,
+            *self.exchange_pose, self.exchange_insert_mm, self.exchange_lift_mm,
+            self.exchange_p_deg, self.exchange_q_deg, self.exchange_q_target,
+            *self.exchange_target, self.exchange_seed)
 
     # ------------------------------------------------------------ 输出
     def _emit(self, msg) -> None:
@@ -437,6 +473,68 @@ class SimDevice:
                 self.estop = latch
                 self._emit(Event(self._us(), EventCode.ESTOP_LATCHED if latch else EventCode.ESTOP_RELEASED,
                                  Severity.WARN if latch else Severity.INFO, 0, 0))
+            return Ack(seq, m.TYPE, AckResult.OK, 0)
+        if isinstance(m, ExchangeCommand):
+            action = ExchangeAction(m.action)
+            if action == ExchangeAction.RESET:
+                self.exchange_free = False
+                self.exchange_phase = ExchangePhase.PARKED
+                self.exchange_pose = [-200.0, 200.0, 800.0, 0.0, 90.0, 0.0]
+                self.exchange_target = list(self.exchange_pose)
+                self.exchange_insert_mm = 0.0
+                self.exchange_lift_mm = 0.0
+                self.exchange_p_deg = 0.0
+                self.exchange_q_deg = 0.0
+                self.exchange_auto = False
+            elif action in (ExchangeAction.RANDOMIZE, ExchangeAction.MOVE_TO_POSE):
+                if action == ExchangeAction.MOVE_TO_POSE and m.use_pose:
+                    self.exchange_target = [m.x_mm, m.y_mm, m.z_mm,
+                                            m.theta_deg, m.phi_deg, m.alpha_deg]
+                else:
+                    self.exchange_seed = m.seed or 1
+                    rng = random.Random(self.exchange_seed)
+                    self.exchange_target = [rng.uniform(-100.0, 0.0), rng.uniform(100.0, 300.0),
+                                            rng.uniform(500.0, 700.0),
+                                            0.0 if m.difficulty == 1 else rng.uniform(-90.0, 90.0),
+                                            90.0 if m.difficulty == 1 else rng.uniform(0.0, 90.0),
+                                            0.0 if m.difficulty == 1 else rng.uniform(-45.0, 45.0)]
+                self.exchange_difficulty = m.difficulty
+                self.exchange_pose = list(self.exchange_target)
+                self.exchange_insert_mm = self.exchange_lift_mm = 0.0
+                self.exchange_p_deg = self.exchange_q_deg = 0.0
+                self.exchange_q_target = self.exchange_pose[5]
+                self.exchange_phase = ExchangePhase.READY
+            elif action == ExchangeAction.INSERT and self.exchange_phase == ExchangePhase.READY:
+                self.exchange_insert_mm = -100.0
+                self.exchange_phase = ExchangePhase.INSERTED
+            elif action == ExchangeAction.LIFT and self.exchange_phase == ExchangePhase.INSERTED:
+                self.exchange_lift_mm = 100.0
+                self.exchange_phase = ExchangePhase.LIFTED
+            elif action == ExchangeAction.ROTATE_P and self.exchange_phase == ExchangePhase.LIFTED:
+                self.exchange_p_deg = 90.0
+                self.exchange_phase = ExchangePhase.P_ROTATED
+            elif action == ExchangeAction.ROTATE_Q and self.exchange_phase == ExchangePhase.P_ROTATED:
+                self.exchange_q_target = m.q_target_deg
+                self.exchange_q_deg = m.q_target_deg
+                self.exchange_phase = ExchangePhase.Q_READY
+            elif action == ExchangeAction.CONFIRM and self.exchange_phase == (
+                    ExchangePhase.INSERTED if self.exchange_difficulty == 1 else
+                    ExchangePhase.LIFTED if self.exchange_difficulty == 2 else
+                    ExchangePhase.Q_READY):   # 确认点随难度变化，与 ArmSim 一致
+                self.exchange_phase = ExchangePhase.COMPLETE
+                self.exchange_auto = False
+            elif action == ExchangeAction.AUTO_DEMO:
+                self.exchange_auto = True
+                if self.exchange_phase == ExchangePhase.PARKED:
+                    self.exchange_phase = ExchangePhase.READY
+            elif action == ExchangeAction.STOP_AUTO:
+                self.exchange_auto = False
+            elif action == ExchangeAction.FREE:
+                self.exchange_free = True
+                self.exchange_auto = False
+                self.exchange_phase = ExchangePhase.PARKED
+            else:
+                return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
             return Ack(seq, m.TYPE, AckResult.OK, 0)
         if isinstance(m, (ParamRead, ParamWrite)):
             return self._param(m, seq)

@@ -13,6 +13,7 @@ struct Viewer::Impl {
     mjvCamera cam;
     mjvOption opt;
     mjvPerturb pert;
+    bool camera_initialized = false;
     std::unique_ptr<mujoco::Simulate> sim;   // 必须在 cam/opt/pert 之后销毁
 };
 
@@ -33,6 +34,10 @@ Viewer::Viewer(MujocoWorld &world) : impl_(new Impl)
     mjv_defaultPerturb(&v.pert);
     v.sim = std::make_unique<mujoco::Simulate>(std::make_unique<mujoco::GlfwAdapter>(),
                                                &v.cam, &v.opt, &v.pert, /* is_passive = */ true);
+    /* RMUC2027 的视觉网格约 350 万三角形。降低查看器刷新和同步频率，
+     * 避免渲染线程长期占住 passive viewer 锁，导致物理线程与 UI 都卡顿。 */
+    v.sim->refresh_rate = 30;
+    v.sim->vsync = 0;
 }
 
 Viewer::~Viewer() = default;
@@ -46,7 +51,7 @@ void Viewer::Run(const std::function<void()> &sim_body)
         try
         {
             v.sim->LoadMessage("");
-            v.sim->Load(v.world->model(), v.world->data(), "");
+            v.sim->Load(v.world->view_model(), v.world->view_data(), "");
             sim_body();
         }
         catch (...)
@@ -72,7 +77,28 @@ std::unique_lock<std::recursive_mutex> Viewer::Lock()
 
 void Viewer::Sync()
 {
-    impl_->sim->Sync();
+    /* 模型在运行期间不变，只需要同步积分状态（qpos/qvel 等），
+     * 不必每个同步周期重新复制完整 mjModel。 */
+    impl_->sim->Sync(true);
+    if (!impl_->camera_initialized)
+    {
+        /* 首帧不要把 28 x 16 m 的场地全部塞进视锥。先看机械臂附近，
+         * 用户仍可在窗口中自行缩放查看全场。 */
+        const std::string root_name = impl_->world->model_prefix() + "link1";
+        const int body = mj_name2id(impl_->world->view_model(), mjOBJ_BODY, root_name.c_str());
+        if (body >= 0)
+        {
+            const mjtNum *position = impl_->world->view_data()->xpos + 3 * body;
+            impl_->cam.type = mjCAMERA_FREE;
+            impl_->cam.lookat[0] = position[0];
+            impl_->cam.lookat[1] = position[1];
+            impl_->cam.lookat[2] = position[2] + 0.6;
+            impl_->cam.distance = 3.0;
+            impl_->cam.azimuth = 135.0;
+            impl_->cam.elevation = -25.0;
+        }
+        impl_->camera_initialized = true;
+    }
 }
 
 bool Viewer::closed() const

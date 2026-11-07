@@ -41,6 +41,7 @@ add_executable(armsim
     Driver/mujoco_world.cpp
     Driver/host_link.cpp
     Module/arm.cpp
+    Module/exchange_station.cpp
     Module/host.cpp
 )
 
@@ -53,6 +54,35 @@ target_include_directories(armsim PRIVATE
 
 target_compile_definitions(armsim PRIVATE
     ARMSIM_DEFAULT_XML="${CMAKE_CURRENT_SOURCE_DIR}/../mujoco/BigArm/robot.xml")
+
+set(ARMSIM_DEFAULT_EXCHANGE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../mujoco/scene/exchange_station.xml"
+    CACHE FILEPATH "Exchange station MJCF")
+get_filename_component(ARMSIM_DEFAULT_EXCHANGE "${ARMSIM_DEFAULT_EXCHANGE}" ABSOLUTE)
+if(EXISTS "${ARMSIM_DEFAULT_EXCHANGE}")
+  target_compile_definitions(armsim PRIVATE
+      ARMSIM_DEFAULT_EXCHANGE="${ARMSIM_DEFAULT_EXCHANGE}")
+else()
+  target_compile_definitions(armsim PRIVATE ARMSIM_DEFAULT_EXCHANGE="")
+  message(WARNING "找不到兑换站模型: ${ARMSIM_DEFAULT_EXCHANGE}")
+endif()
+
+# 默认使用普通无限地面，机械臂和兑换站作为附件合并进去。
+# 如需其他场地，运行时传 --arena <xml>，不再隐式加载 2027 场地。
+set(ARMSIM_DEFAULT_ARENA
+    "${CMAKE_CURRENT_SOURCE_DIR}/../mujoco/scene/plain_floor.xml"
+    CACHE FILEPATH "Default arena MJCF")
+get_filename_component(ARMSIM_DEFAULT_ARENA "${ARMSIM_DEFAULT_ARENA}" ABSOLUTE)
+if(EXISTS "${ARMSIM_DEFAULT_ARENA}")
+  target_compile_definitions(armsim PRIVATE
+      ARMSIM_DEFAULT_ARENA="${ARMSIM_DEFAULT_ARENA}")
+  message(STATUS "arena: ${ARMSIM_DEFAULT_ARENA}")
+else()
+  target_compile_definitions(armsim PRIVATE ARMSIM_DEFAULT_ARENA="")
+  message(WARNING "找不到默认地面: ${ARMSIM_DEFAULT_ARENA}")
+endif()
+
+target_compile_definitions(armsim PRIVATE ARMSIM_DEFAULT_VIEW_ARENA="")
 
 if(MSVC)
   # 源码是 UTF-8（含中文字符串），不加这个 MSVC 会按本地代码页读

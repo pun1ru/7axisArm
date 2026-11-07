@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from armhost.protocol import (MAX_PAYLOAD, Ack, AckResult, ArmPosture, ArmState, CanBusStatus,  # noqa: E402
                               ClearTorque, DecodeError, DeviceInfo, Estop, EstopAction, Event,
-                              EventCode, FrameParser, Heartbeat, JointFlag, JointRecord, JointState,
+                              EventCode, ExchangeCommand, ExchangePhase, ExchangeState,
+                              ExchangeStateFlag, FrameParser, Heartbeat, JointFlag, JointRecord, JointState,
                               MotorStatus, MsgType, ParamRead, ParamValue, ParamWrite, PostureFlag,
                               RawMessage, SetHostTarget, SetIkTarget, SetJointTorque, StatusFlag,
                               SystemStatus, TorqueItem, decode_frame, decode_payload, encode_frame)
@@ -171,7 +172,13 @@ class TestMessages(unittest.TestCase):
                   ClearTorque(0x7F), Estop(EstopAction.LATCH), Estop(EstopAction.RELEASE),
                   ParamRead(0x200, 3), ParamWrite(0x200, 3, ParamType.F32, 1.5),
                   ParamWrite(0x0001, 0, ParamType.U16, 200),
-                  ParamValue(9, 0x0101, 2, ParamType.I8, AckResult.OK, 1, -1)]:
+                  ParamValue(9, 0x0101, 2, ParamType.I8, AckResult.OK, 1, -1),
+                  ExchangeCommand(2, 3, 15.0, -50.0, 250.0, 600.0, 20.0, 70.0, 10.0, 123),
+                  ExchangeState(ExchangePhase.READY, 3,
+                                ExchangeStateFlag.AVAILABLE | ExchangeStateFlag.POSE_VALID,
+                                1.25, -50.0, 250.0, 600.0, 20.0, 70.0, 10.0,
+                                0.0, 0.0, 0.0, 0.0, 10.0, -50.0, 250.0, 600.0,
+                                20.0, 70.0, 10.0, 123)]:
             with self.subTest(type(m).__name__):
                 self.roundtrip(m)
 
@@ -192,6 +199,23 @@ class TestMessages(unittest.TestCase):
             SetHostTarget(7, HostTargetAction.SET_OPEN, 0.0).encode()
         with self.assertRaises(DecodeError):
             decode_payload(MsgType.SET_HOST_TARGET, bytes(7))
+
+    def test_exchange_messages_are_fixed_size(self):
+        command = ExchangeCommand(2, 4, 22.5, -100.0, 300.0, 700.0, -90.0, 0.0, -45.0, 7)
+        payload = command.encode()
+        self.assertEqual(len(payload), 40)
+        self.assertEqual(decode_payload(MsgType.EXCHANGE_COMMAND, payload), command)
+
+        state = ExchangeState(ExchangePhase.Q_READY, 4,
+                              ExchangeStateFlag.AVAILABLE | ExchangeStateFlag.POSE_VALID,
+                              2.5, -50.0, 250.0, 600.0, 20.0, 70.0, -20.0,
+                              100.0, 100.0, 90.0, -20.0, -20.0,
+                              -50.0, 250.0, 600.0, 20.0, 70.0, -20.0, 7)
+        payload = state.encode()
+        self.assertEqual(len(payload), 80)
+        self.assertEqual(decode_payload(MsgType.EXCHANGE_STATE, payload), state)
+        self.assertEqual(MsgType.EXCHANGE_COMMAND, 0x30)
+        self.assertEqual(MsgType.EXCHANGE_STATE, 0x31)
 
     def test_ik_target_and_posture_layout(self):
         command = SetIkTarget(HostIkAction.SET, 5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5, 12.5)

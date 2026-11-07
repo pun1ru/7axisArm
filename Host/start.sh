@@ -4,6 +4,15 @@ set -e
 cd "$(dirname "$0")"
 PY="${PYTHON:-python3}"
 
+# 某些 GNOME/Wayland 环境的 GTK settings schema 不兼容，直接运行 Host 时也走 XWayland。
+if [[ "$(uname -s)" == "Linux" && "${ARMSIM_FORCE_X11:-1}" == "1" &&
+      -n "${WAYLAND_DISPLAY:-}" && -n "${DISPLAY:-}" ]]; then
+    export GDK_BACKEND=x11
+    export XDG_SESSION_TYPE=x11
+    export GSETTINGS_BACKEND=memory
+    echo "[Host] 检测到 Wayland，Qt 窗口使用 XWayland 兼容模式"
+fi
+
 if ! "$PY" -c "import PySide6, pyqtgraph, serial, numpy" 2>/dev/null; then
     echo "缺少依赖，正在安装 requirements.txt ..."
     "$PY" -m pip install -r requirements.txt

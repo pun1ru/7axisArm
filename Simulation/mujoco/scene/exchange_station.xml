@@ -4,7 +4,6 @@
   <option gravity="0 0 -9.810" integrator="implicitfast" />
 
   <asset>
-   
    <!-- exchange.obj split parts (Blender 5.1 export, units: meters, no scale needed) -->
    <!-- Station body -->
    <mesh file="model/exchange_station/tech/exchange_station_dark.obj" name="ex_sta_dark"/>
@@ -16,12 +15,12 @@
    <mesh file="model/exchange_station/tech/exchange_column_main_red.obj"  name="ex_col_main_red"/>
    <mesh file="model/exchange_station/tech/exchange_column_em_base.obj"   name="ex_col_em_base"/>
    <mesh file="model/exchange_station/tech/exchange_column_em_ring.obj"   name="ex_col_em_ring"/>
-
+   <mesh file="model/field_assets/Energy_Unit.STL" name="exchange_energy_unit"/>
   </asset>
 
   <default>
     <joint limited="true" frictionloss="0.1" armature="0.01"/>
-    <geom contype="0" conaffinity="0" mass="0.01" rgba="0.5 0.5 0.5 1"/>
+    <geom contype="0" conaffinity="0" mass="0.01" rgba="0.5 0.5 0.5 1" group="2"/>
     <site size="0.01" rgba="1 1 1 0.3"/>
     <default class="visual_pillar">
         <geom type="cylinder" size="0.018 0.05" rgba="0.8 0.8 0.8 1.0" contype="0" conaffinity="0" mass="0.2"/>
@@ -29,15 +28,25 @@
   </default>
 
   <worldbody>
+    <!-- O 是规则手册 5.4.3 里的装配坐标系原点：底座正面与战场地面交线的中点。
+         X 轴指向 -X 为科技核心方向（核心结构不超出 x=0 的底座正面），Z 向上。
+         规则里的 z=500..700 mm 就是 E 点相对 O 的高度。本文件不带底座和台面，
+         O 放在哪由加载时的位置决定（ArmSim 默认放在地面上）。 -->
     <body name="O_frame" pos="0 0 0">
-      <body name="E">
+      <site name="exchange_origin" pos="0 0 0" size="0.008" rgba="0.2 0.8 1 0.8"/>
+      <!-- E 的世界位置必须等于规则位姿 (x,y,z)（相对 O）。三个滑动关节的 ref 是停放位，
+           MuJoCo 里位置 = body pos + q - ref，所以 body pos 取停放位，抵消 ref。
+           否则 z=0.6 时核心会落到 O 下方 0.2 m。 -->
+      <body name="E" pos="-0.2 0.2 0.8">
 
-        <joint name="level_x" type="slide" axis="1 0 0" range="-0.1 0"/>
-        <joint name="level_y" type="slide" axis="0 1 0" range="0.1 0.3"/>
-        <joint name="level_z" type="slide" axis="0 0 1" range="0.5 0.7"/>
-        <joint name="level_theta" type="hinge" axis="0 0 1" range="-1.5708 1.5708"/> 
-        <joint name="level_phi" type="hinge" axis="0 -1 0" range="0 1.5708"/> 
-        <joint name="level_alpha" type="hinge" axis="1 0 0" range="-0.7854 0.7854"/>
+        <!-- Difficulty targets follow Table 5-10. The physical X range also
+             includes the rules' initial x=-200 mm park position. -->
+        <joint name="level_x" type="slide" axis="1 0 0" range="-0.2 0" ref="-0.2"/>
+        <joint name="level_y" type="slide" axis="0 1 0" range="0.1 0.3" ref="0.2"/>
+        <joint name="level_z" type="slide" axis="0 0 1" range="0.5 0.8" ref="0.8"/>
+        <joint name="level_theta" type="hinge" axis="0 0 1" range="-1.5708 1.5708" ref="0"/>
+        <joint name="level_phi" type="hinge" axis="0 1 0" range="0 1.5708" ref="1.5708"/>
+        <joint name="level_alpha" type="hinge" axis="1 0 0" range="-0.7854 0.7854" ref="0"/>
         
         <!-- Station body (exchange.obj, meters) -->
         <geom type="mesh" mesh="ex_sta_dark" euler="3.14 0 -1.57" rgba="0.05 0.05 0.05 1" contype="0" conaffinity="0"/>
@@ -47,13 +56,17 @@
 
         
         <body name="M" pos="-0.169 0 0">
+          <!-- 步骤 2（沿 -X 插入 100 mm）由重装机器人完成，兑换站侧没有这个自由度，
+               能量单元固定在装配柱的初始位置。 -->
           <joint name="step3_slide" type="slide" axis="0 0 1" range="0 0.1"/>
           <geom name="M_step3_mass" type="sphere" size="0.005" pos="0.169 0 0" rgba="1 0 0 0" mass="0.1"/>
           <!-- <body name="P" pos="0 0 0.108">  -->
             <joint name="p_axis" type="hinge" axis="0 -1 0" pos="0 0 0.108" range="0 1.57"/>
             <!-- <geom name="M_step4_mass" type="sphere" size="0.001" rgba="0 0 0 0" mass="0.1"/> -->
             <!-- <body name="Q" pos="0 0 -0.108">  -->
-              <joint name="q_axis" type="hinge" axis="0 0 1" range="-1.57 1.57"/>
+              <!-- Q 轴过装配柱根部，P 转 90° 后垂直于核心板（沿世界 X），柱子在板面内摆动，
+                 角度刻度是板上的半圆弧（图 5-6 / 5-15）。不是绕柱自转。 -->
+            <joint name="q_axis" type="hinge" axis="0 0 1" range="-1.57 1.57"/>
                <body name="pillar_bottom" pos="0.169 0 0">
                   <!-- <geom name="pillar_visual" class="visual_pillar" quat="0.7071 0 0.7071 0" pos="0.05 0 0" mass = "0.01"/>  -->
                   
@@ -63,7 +76,16 @@
                   <geom name="ex_col_em_base"    type="mesh" mesh="ex_col_em_base"    euler="3.14 0 -1.57" rgba="0.15 0.08 0.03 0.7" mass="0" contype="0" conaffinity="0"/>
                   <geom name="ex_col_em_ring"    type="mesh" mesh="ex_col_em_ring"    euler="3.14 0 -1.57" rgba="0.41 0.41 0.41 1" mass="0" contype="0" conaffinity="0"/>
 
-
+                  <!-- Visual energy unit, coaxial with the assembly column. It
+                       follows lift/P/Q. -->
+                  <body name="energy_unit" pos="0 0 0">
+                    <!-- 400 +/- 50 g from rule 4.5.1. -->
+                    <inertial pos="0 0 0" mass="0.400"
+                              diaginertia="0.00045 0.00045 0.00023"/>
+                    <geom name="energy_unit_visual" type="mesh" mesh="exchange_energy_unit"
+                          euler="0 1.5708 0" pos="0 0 0" rgba="0.92 0.92 0.88 1"
+                          contype="0" conaffinity="0" group="1" mass="0.001"/>
+                  </body>
               </body>
             <!-- </body> -->
           <!-- </body> -->
@@ -74,9 +96,9 @@
 
   <actuator>
     <!-- Difficulty Level Controls (PD Control) -->
-    <position name="ctrl_level_x" joint="level_x" kp="2000" kv="300" ctrlrange="-0.1 0" forcerange="-10 10"/>
+    <position name="ctrl_level_x" joint="level_x" kp="2000" kv="300" ctrlrange="-0.2 0" forcerange="-10 10"/>
     <position name="ctrl_level_y" joint="level_y" kp="2000" kv="300" ctrlrange="0.1 0.3" forcerange="-10 10"/>
-    <position name="ctrl_level_z" joint="level_z" kp="2000" kv="300" ctrlrange="0.5 0.7" forcerange="-10 10"/>
+    <position name="ctrl_level_z" joint="level_z" kp="2000" kv="300" ctrlrange="0.5 0.8" forcerange="-10 10"/>
     <position name="ctrl_level_theta" joint="level_theta" kp="2000" kv="300" ctrlrange="-1.5708 1.5708" forcerange="-10 10"/>
     <position name="ctrl_level_phi" joint="level_phi" kp="2000" kv="300" ctrlrange="0 1.5708" forcerange="-10 10"/>
     <position name="ctrl_level_alpha" joint="level_alpha" kp="2000" kv="300" ctrlrange="-0.7854 0.7854" forcerange="-10 10"/>

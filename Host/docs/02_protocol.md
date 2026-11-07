@@ -73,7 +73,9 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 | 0x28 | PARAM_READ | H→M | 按需 | PARAM_VALUE |
 | 0x29 | PARAM_WRITE | H→M | 按需 | PARAM_VALUE |
 | 0x2A | PARAM_VALUE | M→H | 应答 | — |
-| 0x30~0x3F | 预留：轨迹 / 仿真同步 | | | |
+| 0x30 | EXCHANGE_COMMAND | H→M | 按需 | ACK |
+| 0x31 | EXCHANGE_STATE | M→H | 10 Hz | 无 |
+| 0x32~0x3F | 预留：轨迹 / 仿真同步 | | | |
 
 ## 5. 负载定义（偏移相对负载起点）
 
@@ -145,6 +147,49 @@ SET 从 HOST 进入 HOST_IK，或保持 HOST_IK 更新目标。进入时请求�
 | 4 | f32 | psi_deg | 当前臂角 ψ |
 | 8 | f32 × 3 | x / y / z | 当前末端位置 m |
 | 20 | f32 × 3 | roll / pitch / yaw | 当前末端欧拉角 deg |
+
+### 0x30 EXCHANGE_COMMAND（40 B，ArmSim 扩展）
+
+该消息只用于仿真兑换站，不对应实机 STM32 固件；真实对战控制链不依赖它。
+
+| 偏移 | 类型 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | u8 | version | 当前为 1 |
+| 1 | u8 | action | 0 NONE；1 RESET；2 RANDOMIZE；3 MOVE_TO_POSE；4 INSERT；5 LIFT；6 ROTATE_P；7 ROTATE_Q；8 CONFIRM；9 AUTO_DEMO；10 STOP_AUTO |
+| 2 | u8 | difficulty | 1~4，对应规则表 5-10 |
+| 3 | u8 | flags | bit0=1：位姿字段有效，MOVE_TO_POSE 使用 |
+| 4 | f32 | q_target_deg | Q 轴目标角，范围 `[-90,90]°` |
+| 8 | u32 | seed | 随机种子；0 表示由 ArmSim 生成并在状态中回报 |
+| 12 | f32 | x_mm | 科技核心 E 点相对 O 的 X 坐标 |
+| 16 | f32 | y_mm | E 点 Y 坐标 |
+| 20 | f32 | z_mm | E 点 Z 坐标 |
+| 24 | f32 | theta_deg | 球坐标方位角 θ |
+| 28 | f32 | phi_deg | 球坐标极角 φ |
+| 32 | f32 | alpha_deg | 绕能量单元装配柱法向的旋转 α |
+| 36 | u32 | reserved | 0 |
+
+只有当前阶段允许的动作返回 `OK`；阶段不符、位姿越界或尚未完成上一步时返回 `BAD_PARAM`。
+命令不自动重试，避免重复执行装配动作。
+
+### 0x31 EXCHANGE_STATE（80 B，ArmSim 扩展）
+
+| 偏移 | 类型 | 字段 | 说明 |
+|---|---|---|---|
+| 0 | u8 | version | 当前为 1 |
+| 1 | u8 | phase | 0 PARKED，1 MOVING_POSE，2 READY，3 INSERTING，4 INSERTED，5 LIFTING，6 LIFTED，7 ROTATING_P，8 P_ROTATED，9 ROTATING_Q，10 Q_READY，11 COMPLETE，12 RESETTING |
+| 2 | u8 | difficulty | 当前难度 |
+| 3 | u8 | flags | bit0 可用，bit1 机构运动，bit2 位姿有效，bit3 自动演示，bit4 装配完成，bit5 Q 轴到位 |
+| 4 | f32 | sim_time_s | ArmSim 仿真时间 |
+| 8 | f32 × 3 | x/y/z_mm | 当前 E 点坐标 |
+| 20 | f32 × 3 | theta/phi/alpha_deg | 当前核心角度 |
+| 32 | f32 | insert_mm | 插入量，装配目标为 −100 mm |
+| 36 | f32 | lift_mm | 上移量，目标为 +100 mm |
+| 40 | f32 | p_deg | P 轴当前角 |
+| 44 | f32 | q_deg | Q 轴当前角 |
+| 48 | f32 | q_target_deg | Q 轴目标角 |
+| 52 | f32 × 3 | target_x/y/z_mm | 当前目标位姿 |
+| 64 | f32 × 3 | target_theta/phi/alpha_deg | 当前目标角度 |
+| 76 | u32 | seed | 本局实际随机种子，可用于复现 |
 
 ### 0x10 JOINT_STATE（12 + N×28 B，N=7 时 208 B，整帧 219 B）
 | 偏移 | 类型 | 字段 | 说明 |

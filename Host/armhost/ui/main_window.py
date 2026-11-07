@@ -17,6 +17,7 @@ from ..model.sim import SimBackend
 from . import theme
 from .gravity_panel import GravityFitPanel
 from .host_panel import HostPanel
+from .exchange_panel import ExchangePanel
 from .ik_panel import IkPanel
 from .joint_table import JointTable
 from .layout_util import scrollable
@@ -119,9 +120,11 @@ class MonitorWindow(QMainWindow):
 
         self.host = HostPanel(self.ctrl, joint_count)
         self.ik = IkPanel(self.ctrl)
+        self.exchange = ExchangePanel(self.ctrl)
         host_tabs = QTabWidget()
         host_tabs.addTab(scrollable(self.host), "关节角闭环")
         host_tabs.addTab(scrollable(self.ik), "IK 闭环")
+        host_tabs.addTab(scrollable(self.exchange), "兑换站")
         host_dock = QDockWidget("Host 目标", self)
         host_dock.setObjectName("host_dock")
         host_dock.setWidget(host_tabs)
@@ -264,8 +267,10 @@ class MonitorWindow(QMainWindow):
         host_supported = backend is not None and hasattr(backend, "set_host_target") \
             and hasattr(backend, "stop_host_loops") and hasattr(backend, "read_limits")
         ik_supported = host_supported and hasattr(backend, "set_ik_target") and hasattr(backend, "stop_ik")
+        exchange_supported = backend is not None and hasattr(backend, "exchange_command")
         self.host.set_connected(host_supported)
         self.ik.set_connected(host_supported, ik_supported)
+        self.exchange.set_connected(exchange_supported)
         if backend is None:
             self.src.setEnabled(True)
             self._on_src()
@@ -321,6 +326,7 @@ class MonitorWindow(QMainWindow):
         self.table.update_sample(s)
         self.host.tick(s)
         self.ik.tick(s)
+        self.exchange.tick(s)
         st = self.ctrl.status()
         view = self.ctrl.buffer.view(3.0)
         timing = timing_stats(view)

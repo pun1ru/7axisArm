@@ -4,4 +4,5 @@
 	branch = 7axisarm
 [submodule "opensource/rmuc2027_mjarena"]
 	path = opensource/rmuc2027_mjarena
-	url = /tmp/rmuc2027_mjarena.sIEcp2
+	url = https://github.com/CosmosMount/rmuc2027_mjarena.git
+	branch = main

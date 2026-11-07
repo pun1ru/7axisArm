@@ -1,0 +1,4 @@
+WARNING Sat Nov  7 16:47:01 2026: Attaching a spec with an empty prefix may prevent the model from being saved correctly.
+
+WARNING Sat Nov  7 18:16:39 2026: Could not find decoder for resource '--help'
+

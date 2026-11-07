@@ -2,11 +2,28 @@
 # 一键启动 ArmSim（MuJoCo + --host 伪串口）和 Host 上位机。
 #
 # 用法:
-#   ./start_all.sh                 编译并打开 MuJoCo 窗口，然后启动 Host
+#   ./start_all.sh                 编译并打开普通地面 + ArmSim 窗口，然后启动 Host
 #   ./start_all.sh --no-viewer     不打开 MuJoCo 窗口
+#   ./start_all.sh --no-arena      不加载地面/兑换站，只运行机械臂
+#   ./start_all.sh --arena FILE    使用指定场地
+#   ./start_all.sh --arm-position X Y Z
+#   ./start_all.sh --exchange-position X Y Z
+#   ./start_all.sh --no-exchange   不加载兑换站
+#   ./start_all.sh --exchange-free 启动时释放兑换站关节，可在窗口里拖动
+#   ./start_all.sh --full-viewer   查看器也加载完整碰撞模型（很慢）
 #   ./start_all.sh --no-build      跳过编译，直接运行已有 build/armsim
 #   ./start_all.sh -- --log DEBUG   -- 后面的参数原样传给 Host
 set -euo pipefail
+
+# 部分 GNOME/Wayland 桌面会因 xsettings 的 antialiasing 键缺失让 GTK 直接 abort。
+# MuJoCo 的 GLFW 窗口和 PySide6 Host 都受影响；默认在 Wayland 会话下走 XWayland。
+if [[ "$(uname -s)" == "Linux" && "${ARMSIM_FORCE_X11:-1}" == "1" &&
+      -n "${WAYLAND_DISPLAY:-}" && -n "${DISPLAY:-}" ]]; then
+    export GDK_BACKEND=x11
+    export XDG_SESSION_TYPE=x11
+    export GSETTINGS_BACKEND=memory
+    echo "[start_all] 检测到 Wayland，GUI 使用 XWayland 兼容模式（ARMSIM_FORCE_X11=0 可关闭）"
+fi
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 ARMSIM_DIR="$ROOT/Simulation/ArmSim"
@@ -25,11 +42,47 @@ while (($#)); do
         --no-viewer)
             armsim_args+=(--no-viewer)
             ;;
+        --no-arena)
+            armsim_args+=(--no-arena)
+            ;;
+        --no-exchange)
+            armsim_args+=(--no-exchange)
+            ;;
+        --exchange-free)
+            armsim_args+=(--exchange-free)
+            ;;
+        --full-viewer)
+            armsim_args+=(--full-viewer)
+            ;;
+        --arena)
+            if (($# < 2)); then
+                echo "[start_all] --arena 需要一个 MJCF 路径" >&2
+                exit 2
+            fi
+            armsim_args+=(--arena "$2")
+            shift
+            ;;
+        --arm-position)
+            if (($# < 4)); then
+                echo "[start_all] --arm-position 需要 X Y Z 三个数" >&2
+                exit 2
+            fi
+            armsim_args+=(--arm-position "$2" "$3" "$4")
+            shift 3
+            ;;
+        --exchange-position)
+            if (($# < 4)); then
+                echo "[start_all] --exchange-position 需要 X Y Z 三个数" >&2
+                exit 2
+            fi
+            armsim_args+=(--exchange-position "$2" "$3" "$4")
+            shift 3
+            ;;
         --no-build)
             do_build=0
             ;;
         -h|--help)
-            sed -n '2,10p' "$0"
+            sed -n '2,14p' "$0"
             exit 0
             ;;
         --)

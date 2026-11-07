@@ -10,8 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from armhost.comm import (AckTimeoutError, ArmLink, CommandRejected, FaultConfig,  # noqa: E402
                           LinkLostError, LinkState, McuClock, SeqTracker, SimDevice,
                           make_mock_transport)
-from armhost.protocol import (AckResult, ArmState, JointFlag, MsgType, PostureFlag,  # noqa: E402
-                              SetHostTarget, StatusFlag)
+from armhost.protocol import (AckResult, ArmState, ExchangeAction, ExchangePhase,  # noqa: E402
+                              ExchangeStateFlag, JointFlag, MsgType, PostureFlag, SetHostTarget,
+                              StatusFlag)
 
 
 def wait_until(pred, timeout=2.0):
@@ -181,6 +182,42 @@ class TestLink(LinkCase):
         self.assertEqual(self.link.stop_ik().result(1.0).result, AckResult.OK)
         self.assertEqual(self.dev.arm_state, ArmState.HOST)
         self.assertEqual(self.dev.host_closed_loop_mask, 0)
+
+    def test_exchange_sequence_and_state(self):
+        states = []
+        self.link.subscribe(MsgType.EXCHANGE_STATE, lambda r: states.append(r.msg))
+        ack = self.link.exchange_command(ExchangeAction.RANDOMIZE, 3, seed=42).result(1.0)
+        self.assertEqual(ack.result, AckResult.OK)
+        self.assertTrue(wait_until(lambda: states and states[-1].phase == ExchangePhase.READY))
+        ready = states[-1]
+        self.assertEqual(ready.seed, 42)
+        self.assertIn(ExchangeStateFlag.POSE_VALID, ExchangeStateFlag(ready.flags))
+        self.assertTrue(-100.0 <= ready.x_mm <= 0.0)
+        self.assertTrue(100.0 <= ready.y_mm <= 300.0)
+        self.assertTrue(500.0 <= ready.z_mm <= 700.0)
+
+        for action, phase in ((ExchangeAction.INSERT, ExchangePhase.INSERTED),
+                              (ExchangeAction.LIFT, ExchangePhase.LIFTED),
+                              (ExchangeAction.ROTATE_P, ExchangePhase.P_ROTATED),
+                              (ExchangeAction.ROTATE_Q, ExchangePhase.Q_READY),
+                              (ExchangeAction.CONFIRM, ExchangePhase.COMPLETE)):
+            self.link.exchange_command(action, 3, q_target_deg=12.0).result(1.0)
+            self.assertTrue(wait_until(lambda p=phase: states[-1].phase == p))
+
+    def test_exchange_confirm_point_follows_difficulty(self):
+        states = []
+        self.link.subscribe(MsgType.EXCHANGE_STATE, lambda r: states.append(r.msg))
+        for level, steps in ((1, (ExchangeAction.INSERT,)),
+                             (2, (ExchangeAction.INSERT, ExchangeAction.LIFT))):
+            self.link.exchange_command(ExchangeAction.RESET, level).result(1.0)
+            self.link.exchange_command(ExchangeAction.RANDOMIZE, level, seed=7).result(1.0)
+            self.assertTrue(wait_until(lambda: states and states[-1].phase == ExchangePhase.READY))
+            for action in steps:
+                self.link.exchange_command(action, level).result(1.0)
+            self.assertTrue(wait_until(lambda: states[-1].phase in (ExchangePhase.INSERTED,
+                                                                    ExchangePhase.LIFTED)))
+            self.link.exchange_command(ExchangeAction.CONFIRM, level).result(1.0)
+            self.assertTrue(wait_until(lambda: states[-1].phase == ExchangePhase.COMPLETE))
 
     def test_ack_timeout_and_retry(self):
         self.dev.ignore_types = {MsgType.PARAM_READ}

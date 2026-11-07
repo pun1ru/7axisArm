@@ -20,9 +20,9 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..protocol import (Ack, AckResult, ClearTorque, DecodeError, DeviceInfo, DeviceInfoReq,
-                        Estop, EstopAction, Frame, FrameFlag, FrameParser, Heartbeat, MsgType,
-                        ParamRead, ParamValue, ParamWrite, SetHostTarget, SetIkTarget,
-                        SetJointTorque, TorqueItem, decode_frame, encode_frame)
+                        Estop, EstopAction, ExchangeCommand, Frame, FrameFlag, FrameParser,
+                        Heartbeat, MsgType, ParamRead, ParamValue, ParamWrite, SetHostTarget,
+                        SetIkTarget, SetJointTorque, TorqueItem, decode_frame, encode_frame)
 from ..protocol.enums import HostIkAction, HostTargetAction, ParamType
 from ..protocol.params import BY_ID
 from .hexlog import HexLog
@@ -173,6 +173,15 @@ class ArmLink:
 
     def stop_ik(self) -> Future:
         return self._request(SetIkTarget(HostIkAction.STOP), retries=0)
+
+    def exchange_command(self, action, difficulty: int = 1, q_target_deg: float = 0.0,
+                         x_mm: float = -200.0, y_mm: float = 200.0, z_mm: float = 800.0,
+                         theta_deg: float = 0.0, phi_deg: float = 90.0,
+                         alpha_deg: float = 0.0, seed: int = 0,
+                         use_pose: bool = False) -> Future:
+        return self._request(ExchangeCommand(action, difficulty, q_target_deg, x_mm, y_mm,
+                                             z_mm, theta_deg, phi_deg, alpha_deg, seed,
+                                             use_pose), retries=0)
 
     def estop(self, latch: bool = True) -> Future:
         return self._request(Estop(EstopAction.LATCH if latch else EstopAction.RELEASE))

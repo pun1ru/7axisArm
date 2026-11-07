@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..protocol.enums import ArmState, StatusFlag
-from ..protocol.msg_report import ArmPosture, JointRecord
+from ..protocol.msg_report import ArmPosture, ExchangeState, JointRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +27,7 @@ class RobotSample:
     host_cmd_age_ms: int
     joints: tuple[JointRecord, ...]
     posture: ArmPosture | None = None
+    exchange: ExchangeState | None = None
 
 
 def branch_text(branch: int | None) -> str:

@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "arm.h"
+#include "exchange_station.h"
 #include "host.h"
 #include "host_link.h"
 #include "mujoco_world.h"
@@ -23,14 +24,32 @@
 #define ARMSIM_DEFAULT_XML "../mujoco/BigArm/robot.xml"   // CMake 会覆盖成源码树里的绝对路径
 #endif
 
+#ifndef ARMSIM_DEFAULT_ARENA
+#define ARMSIM_DEFAULT_ARENA ""
+#endif
+
+#ifndef ARMSIM_DEFAULT_VIEW_ARENA
+#define ARMSIM_DEFAULT_VIEW_ARENA ""
+#endif
+
+#ifndef ARMSIM_DEFAULT_EXCHANGE
+#define ARMSIM_DEFAULT_EXCHANGE ""
+#endif
+
 namespace {
 
 /*--------------------------------------仿真参数--------------------------------------*/
 constexpr double kControlPeriodS = 0.002;       // 必须等于 MJCF 的 timestep
 constexpr int kMonitorEverySteps = 50;          // 100 ms
 constexpr const char *kHostLinkPath = "/tmp/armsim-host";
+constexpr const char *kArenaModelPrefix = "arm/";
+constexpr const char *kExchangeModelPrefix = "exchange/";
+constexpr std::array<double, 3> kDefaultArmPosition{{5.0, -5.0, 0.01}};
+/* O 为兑换站底座正面与战场地面交线中点（规则 5.4.3）。普通地面场景里地面就是 z=0；
+ * 换成带高地的场地时用 --exchange-position 指定。 */
+constexpr std::array<double, 3> kDefaultExchangePosition{{4.05, -5.0, 0.0}};
 constexpr uint16_t kHostStateDivider = 5;       // 2 ms * 5 = 100 Hz，与实机相同
-constexpr int kSyncEverySteps = 4;              // 每 4 步（8 ms 仿真时间）把状态同步给窗口一次
+constexpr int kSyncEverySteps = 17;             // 每 17 步（34 ms）把状态同步给窗口一次
 
 /* 仿真专用的电机参数，不属于 URDF。MJCF 里没有这三项；加上后远端小惯量关节不抖、能停住。
  * 置 0 就是“纯 MJCF”。 */
@@ -59,6 +78,11 @@ Arm::JointGain MakeGain(float kp, float kd, float output_max)
     return gain;
 }
 
+std::string ModelName(const MujocoWorld &world, const std::string &name)
+{
+    return world.model_prefix() + name;
+}
+
 /* BigArm：joint1 是腰部，只起直立作用；joint2..joint8 是主臂 7 个关节；两个滑动关节是夹爪。
  * 仿真电机与模型关节同轴：零点 0、方向 +1。 */
 Arm::Config MakeArmConfig(const MujocoWorld &world)
@@ -69,13 +93,21 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
     c.init_state = Arm::State::Protected;
 
     /* base -> 腰部连杆（link1）的安装位姿，来自 URDF joint1 的 origin */
-    c.waist_joint = "joint1";
+    c.waist_joint = ModelName(world, "joint1");
     c.waist_mount = TransformFromXyzRpy({0.000558840342f, -0.0208529944f, 0.038f},
                                         {1.570796327f, -1.570796327f, 0.0f});
     c.waist_hold_deg = 0.0f;
     c.waist_gain = MakeGain(3.89f, 233.6f, 30.0f);
 
-    c.joint_name = {"joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "joint8"};
+    c.joint_name = {
+        ModelName(world, "joint2"),
+        ModelName(world, "joint3"),
+        ModelName(world, "joint4"),
+        ModelName(world, "joint5"),
+        ModelName(world, "joint6"),
+        ModelName(world, "joint7"),
+        ModelName(world, "joint8"),
+    };
     c.joint_effort_limit = 100.0;   // URDF effort
 
     /* 改进 DH，一行对应 joint2..joint8，末端坐标系为 {link8}，取自 mujoco/BigArm/dh_params.md */
@@ -111,7 +143,10 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
     };
 
     /* 夹爪：两指沿各自导轨移动，0 = 装配位姿（张开），0.015 m = 夹紧。误差 mm -> 每指力 N */
-    c.gripper.finger_joint = {"gripper_finger1_joint", "gripper_finger2_joint"};
+    c.gripper.finger_joint = {
+        ModelName(world, "gripper_finger1_joint"),
+        ModelName(world, "gripper_finger2_joint"),
+    };
     c.gripper.open_m = 0.0f;
     c.gripper.closed_m = 0.015f;
     c.gripper.finger_effort_limit = 50.0;   // URDF effort
@@ -127,7 +162,8 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
     c.gravity.g = GravityModel::kDefaultG;
     for (int i = 0; i < GravityModel::kDof; ++i)
     {
-        const MujocoWorld::Inertial in = world.BodyInertial("link" + std::to_string(i + 1), false);
+        const MujocoWorld::Inertial in =
+            world.BodyInertial(ModelName(world, "link" + std::to_string(i + 1)), false);
 
         c.gravity.link[i].mass_kg = static_cast<float>(in.mass_kg);
         for (int k = 0; k < 3; ++k)
@@ -141,7 +177,8 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
                                         tip.mass_kg * tip.com_m[2]};
     for (const char *finger : {"link9", "link10"})
     {
-        const MujocoWorld::Inertial in = world.BodyInertial(finger, true);   // 折算到 link8 坐标系
+        const MujocoWorld::Inertial in =
+            world.BodyInertial(ModelName(world, finger), true);   // 折算到 link8 坐标系
 
         tip_mass += in.mass_kg;
         for (int k = 0; k < 3; ++k)
@@ -223,7 +260,8 @@ void PrintStatus(const MujocoWorld &world, const Arm &arm)
 {
     const Arm::Observer &obs = arm.observer();
     const Arm::Output &out = arm.control().output;
-    const auto tcp = world.SitePosition("dh8").value_or(std::array<double, 3>{});
+    const auto tcp =
+        world.SitePosition(ModelName(world, "dh8")).value_or(std::array<double, 3>{});
     float tau_max = std::fabs(out.waist_nm);
 
     for (int i = 0; i < kJointCount; ++i)
@@ -240,13 +278,28 @@ void PrintStatus(const MujocoWorld &world, const Arm &arm)
 
 void PrintUsage(const char *prog)
 {
-    std::printf("用法: %s [模型.xml] [秒数] [--fast] [--host] [--no-viewer]\n"
+    std::printf("用法: %s [模型.xml] [秒数] [选项]\n"
                 "  默认模型 %s\n"
+                "  默认场地 %s\n"
                 "  秒数         不给就一直跑，Ctrl-C 或关窗口退出\n"
                 "  --fast       不按实时节拍 sleep\n"
                 "  --host       开伪串口 %s 等 Host/armhost 连接，由上位机给主臂目标\n"
-                "  --no-viewer  不开 MuJoCo 窗口\n",
-                prog, ARMSIM_DEFAULT_XML, kHostLinkPath);
+                "  --no-viewer  不开 MuJoCo 窗口\n"
+                "  --full-viewer\n"
+                "               使用与物理模型相同的查看器模型（自定义场地时可直接看到完整模型）\n"
+                "  --arena XML  合并指定场地（默认普通 MuJoCo 地面）\n"
+                "  --no-arena   只加载机械臂模型\n"
+                "  --arm-position X Y Z\n"
+                "               机械臂在场地世界系的位置，默认 5 -5 0.01 m\n"
+                "  --exchange-position X Y Z\n"
+                "               兑换站装配坐标系原点 O 的世界位置，默认 4.05 -5 0 m\n"
+                "  --no-exchange\n"
+                "               不加载兑换站\n"
+                "  --exchange-free\n"
+                "               启动时释放兑换站关节（可在窗口里手动拖动；Host 点“复位”重新接管）\n",
+                prog, ARMSIM_DEFAULT_XML,
+                ARMSIM_DEFAULT_ARENA[0] == '\0' ? "未配置" : ARMSIM_DEFAULT_ARENA,
+                kHostLinkPath);
 }
 
 }  // namespace
@@ -254,10 +307,17 @@ void PrintUsage(const char *prog)
 int main(int argc, char **argv)
 {
     const char *xml_path = ARMSIM_DEFAULT_XML;
+    std::string arena_path = ARMSIM_DEFAULT_ARENA;
+    std::string exchange_xml_path = ARMSIM_DEFAULT_EXCHANGE;
+    std::array<double, 3> arm_position = kDefaultArmPosition;
+    std::array<double, 3> exchange_position = kDefaultExchangePosition;
     double duration_s = std::numeric_limits<double>::infinity();
     bool realtime = true;
     bool host_mode = false;
     bool use_viewer = true;
+    bool full_viewer = false;
+    bool use_exchange = true;
+    bool exchange_free = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i)
@@ -273,6 +333,69 @@ int main(int argc, char **argv)
         else if (std::strcmp(argv[i], "--no-viewer") == 0)
         {
             use_viewer = false;
+        }
+        else if (std::strcmp(argv[i], "--full-viewer") == 0)
+        {
+            full_viewer = true;
+        }
+        else if (std::strcmp(argv[i], "--arena") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--arena 需要一个 MJCF 路径\n");
+                return 2;
+            }
+            arena_path = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--no-arena") == 0)
+        {
+            arena_path.clear();
+        }
+        else if (std::strcmp(argv[i], "--no-exchange") == 0)
+        {
+            use_exchange = false;
+        }
+        else if (std::strcmp(argv[i], "--exchange-free") == 0)
+        {
+            exchange_free = true;
+        }
+        else if (std::strcmp(argv[i], "--arm-position") == 0)
+        {
+            if (i + 3 >= argc)
+            {
+                std::fprintf(stderr, "--arm-position 需要 X Y Z 三个数\n");
+                return 2;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const char *text = argv[++i];
+                char *end = nullptr;
+                arm_position[axis] = std::strtod(text, &end);
+                if (end == text || *end != '\0' || !std::isfinite(arm_position[axis]))
+                {
+                    std::fprintf(stderr, "无效的机械臂位置 %s\n", text);
+                    return 2;
+                }
+            }
+        }
+        else if (std::strcmp(argv[i], "--exchange-position") == 0)
+        {
+            if (i + 3 >= argc)
+            {
+                std::fprintf(stderr, "--exchange-position 需要 X Y Z 三个数\n");
+                return 2;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const char *text = argv[++i];
+                char *end = nullptr;
+                exchange_position[axis] = std::strtod(text, &end);
+                if (end == text || *end != '\0' || !std::isfinite(exchange_position[axis]))
+                {
+                    std::fprintf(stderr, "无效的兑换站位置 %s\n", text);
+                    return 2;
+                }
+            }
         }
         else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0 || positional >= 2)
         {
@@ -301,19 +424,47 @@ int main(int argc, char **argv)
         /* 构造：物理世界 -> 机械臂 ->（可选）上位机链路和协议桥 */
         MujocoWorld::Config world_config;
         world_config.xml_path = xml_path;
+        world_config.arena_path = arena_path;
+        world_config.view_arena_path =
+            arena_path.empty() || full_viewer ? "" : ARMSIM_DEFAULT_VIEW_ARENA;
+        world_config.model_prefix = arena_path.empty() ? "" : kArenaModelPrefix;
+        world_config.model_position = arm_position;
+        const bool station_enabled = use_exchange && !arena_path.empty() &&
+                                     !exchange_xml_path.empty();
+        world_config.exchange_xml_path = station_enabled ? exchange_xml_path : "";
+        world_config.exchange_position = exchange_position;
+        world_config.exchange_prefix = kExchangeModelPrefix;
         world_config.joint_armature = kJointArmature;
         world_config.joint_damping = kJointDamping;
         world_config.joint_frictionloss = kJointFrictionLoss;
 
         MujocoWorld world(world_config);
         Arm arm(world, MakeArmConfig(world));
+        std::unique_ptr<ExchangeStation> exchange;
+        if (station_enabled)
+        {
+            exchange = std::make_unique<ExchangeStation>(world, kExchangeModelPrefix);
+            if (exchange_free)
+            {
+                ExchangeStation::Command free_cmd;
+                free_cmd.action = ExchangeStation::Action::Free;
+                exchange->HandleCommand(free_cmd);
+                std::printf("[system] exchange: 关节已释放，可在窗口里拖动\n");
+            }
+            const auto pose = exchange->GetSnapshot().pose;
+            std::printf("[system] exchange: %s @ O=[%.3f %.3f %.3f], "
+                        "core pose=[%.0f %.0f %.0f] mm\n",
+                        exchange_xml_path.c_str(), exchange_position[0], exchange_position[1],
+                        exchange_position[2], pose.x_m * 1000.0, pose.y_m * 1000.0,
+                        pose.z_m * 1000.0);
+        }
 
         std::unique_ptr<HostLink> link;
         std::unique_ptr<Host> host;
         if (host_mode)
         {
             link = std::make_unique<HostLink>(kHostLinkPath);
-            host = std::make_unique<Host>(arm, *link, kHostStateDivider);
+            host = std::make_unique<Host>(arm, *link, kHostStateDivider, exchange.get());
             /* 进入 HOST 时主臂没有任何关节闭环，只有重力前馈托着，等上位机发 SET_HOST_TARGET；
              * 腰部和夹爪由 Arm 自己保持 */
             arm.SetState(Arm::State::Host);
@@ -351,7 +502,17 @@ int main(int argc, char **argv)
         {
             std::printf("[system] 注意: MJCF timestep=%.6f s, 控制周期=%.6f s\n", dt, kControlPeriodS);
         }
-        std::printf("[system] model=%s, dt=%.4f s, Ctrl-C 退出\n", xml_path, dt);
+        if (arena_path.empty())
+        {
+            std::printf("[system] model=%s, arena=none, dt=%.4f s, Ctrl-C 退出\n", xml_path, dt);
+        }
+        else
+        {
+            std::printf("[system] model=%s, arena=%s, position=[%.3f %.3f %.3f], "
+                        "prefix=%s, dt=%.4f s, Ctrl-C 退出\n",
+                        xml_path, arena_path.c_str(), arm_position[0], arm_position[1],
+                        arm_position[2], world.model_prefix().c_str(), dt);
+        }
 
         /* 步进仿真：输入 -> 臂控制 -> 上位机收发 -> 物理步进 -> 监视输出。
          * 有窗口时这个循环跑在副线程，窗口占主线程；推进物理期间持有查看器的锁，睡眠时放开 */
@@ -394,6 +555,10 @@ int main(int argc, char **argv)
                         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
                 }
 
+                if (exchange)
+                {
+                    exchange->Step(dt);
+                }
                 world.Step();
 
                 if (!host_mode && step % kMonitorEverySteps == 0)   // 状态由上位机看，终端不刷屏

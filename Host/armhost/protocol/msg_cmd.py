@@ -13,7 +13,8 @@ import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from .enums import AckResult, EstopAction, HostIkAction, HostTargetAction, MsgType, ParamType
+from .enums import (AckResult, EstopAction, ExchangeAction, HostIkAction, HostTargetAction,
+                    MsgType, ParamType)
 from .msg_link import DecodeError, as_enum, need
 
 _VALUE_FMT = {ParamType.U8: "<B3x", ParamType.I8: "<b3x", ParamType.U16: "<H2x",
@@ -184,6 +185,57 @@ class SetIkTarget:
             raise DecodeError(f"SET_IK_TARGET psi_mode {auto_psi} is invalid")
         return cls(as_enum(HostIkAction, action), branch, x, y, z, roll, pitch, yaw, psi,
                    bool(auto_psi), tuple(weights))
+
+
+@dataclass(slots=True)
+class ExchangeCommand:
+    """ArmSim 兑换站扩展命令，共 40 B。
+
+    0 version u8 | 1 action u8 | 2 difficulty u8 | 3 flags u8
+    4 q_target_deg f32 | 8 seed u32
+    12 x_mm | 16 y_mm | 20 z_mm | 24 theta_deg | 28 phi_deg | 32 alpha_deg（均为 f32）
+    36 reserved u32
+
+    flags bit0=1 表示携带手动位姿；MOVE_TO_POSE 使用该位姿，RANDOMIZE 只使用 difficulty/seed。
+    seed=0 时由 ArmSim 生成随机种子，状态报文会回报实际种子以便复现。
+    """
+    TYPE: ClassVar[int] = MsgType.EXCHANGE_COMMAND
+    S: ClassVar[struct.Struct] = struct.Struct("<BBBBfI6fI")
+    action: ExchangeAction | int = ExchangeAction.NONE
+    difficulty: int = 1
+    q_target_deg: float = 0.0
+    x_mm: float = -200.0
+    y_mm: float = 200.0
+    z_mm: float = 800.0
+    theta_deg: float = 0.0
+    phi_deg: float = 90.0
+    alpha_deg: float = 0.0
+    seed: int = 0
+    use_pose: bool = False
+
+    def encode(self) -> bytes:
+        action = ExchangeAction(self.action)
+        if not 1 <= int(self.difficulty) <= 4:
+            raise ValueError("EXCHANGE_COMMAND difficulty must be in [1, 4]")
+        values = (self.q_target_deg, self.x_mm, self.y_mm, self.z_mm,
+                  self.theta_deg, self.phi_deg, self.alpha_deg)
+        if not all(math.isfinite(float(v)) for v in values):
+            raise ValueError("EXCHANGE_COMMAND contains non-finite value")
+        flags = 1 if self.use_pose else 0
+        return self.S.pack(1, int(action), int(self.difficulty), flags, float(self.q_target_deg),
+                           int(self.seed) & 0xFFFFFFFF, float(self.x_mm), float(self.y_mm),
+                           float(self.z_mm), float(self.theta_deg), float(self.phi_deg),
+                           float(self.alpha_deg), 0)
+
+    @classmethod
+    def decode(cls, p: bytes) -> "ExchangeCommand":
+        need(p, cls.S.size, "EXCHANGE_COMMAND")
+        version, action, difficulty, flags, q_target, seed, x, y, z, theta, phi, alpha, _ = \
+            cls.S.unpack_from(p)
+        if version != 1:
+            raise DecodeError(f"EXCHANGE_COMMAND version {version} is unsupported")
+        return cls(as_enum(ExchangeAction, action), difficulty, q_target, x, y, z,
+                   theta, phi, alpha, seed, bool(flags & 1))
 
 
 @dataclass(slots=True)

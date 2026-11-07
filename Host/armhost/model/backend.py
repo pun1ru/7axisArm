@@ -78,8 +78,10 @@ class SerialBackend(RobotBackend):
         self.label = label or transport.config.port
         self._clock = McuClock()
         self._posture = None
+        self._exchange = None
         self.link.subscribe(MsgType.JOINT_STATE, self._on_state)
         self.link.subscribe(MsgType.ARM_POSTURE, self._on_posture)
+        self.link.subscribe(MsgType.EXCHANGE_STATE, self._on_exchange)
         self.link.subscribe(MsgType.SYSTEM_STATUS, lambda r: self._emit_event("system", r.msg))
         self.link.subscribe(MsgType.EVENT, lambda r: self._emit_event("event", r.msg))
         self.link.add_link_listener(self._on_link)
@@ -93,15 +95,19 @@ class SerialBackend(RobotBackend):
         m: JointState = r.msg
         self._emit_sample(RobotSample(self._clock.unwrap(m.mcu_time_us), r.host_time_ns, r.frame.seq,
                                       m.arm_state, m.status_flags, m.host_cmd_age_ms, tuple(m.joints),
-                                      self._posture))
+                                      self._posture, self._exchange))
 
     def _on_posture(self, r) -> None:
         self._posture = r.msg
+
+    def _on_exchange(self, r) -> None:
+        self._exchange = r.msg
 
     def _on_link(self, alive: bool) -> None:
         if not alive:
             self._clock.reset()
             self._posture = None
+            self._exchange = None
         self._emit_event("link", alive)
         if alive:   # 每次链路恢复都重新握手，取关节数与版本
             fut = self.link.request_device_info()
@@ -130,6 +136,14 @@ class SerialBackend(RobotBackend):
 
     def stop_ik(self) -> Future:
         return self.link.stop_ik()
+
+    def exchange_command(self, action, difficulty: int = 1, q_target_deg: float = 0.0,
+                         x_mm: float = -200.0, y_mm: float = 200.0, z_mm: float = 800.0,
+                         theta_deg: float = 0.0, phi_deg: float = 90.0,
+                         alpha_deg: float = 0.0, seed: int = 0,
+                         use_pose: bool = False) -> Future:
+        return self.link.exchange_command(action, difficulty, q_target_deg, x_mm, y_mm, z_mm,
+                                          theta_deg, phi_deg, alpha_deg, seed, use_pose)
 
     def _read_param_series(self, requests: list[tuple[int, int]]) -> Future:
         """Read parameters sequentially to avoid overflowing the MCU reply queue."""

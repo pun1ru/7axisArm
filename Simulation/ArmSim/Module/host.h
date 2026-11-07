@@ -6,6 +6,8 @@
 #include "arm.h"
 #include "host_link.h"
 
+class ExchangeStation;
+
 /* 上位机协议桥，帧格式、消息号、参数号与实机
  * Real/DIYcontroller/LibSE/Module/Host/host.c 相同，PC 端 Host/armhost 无需修改。
  *
@@ -18,7 +20,8 @@
 class Host {
 public:
     /* state_divider：每 N 次 Step 上报一次 JOINT_STATE */
-    Host(Arm &arm, HostLink &link, uint16_t state_divider);
+    Host(Arm &arm, HostLink &link, uint16_t state_divider,
+         ExchangeStation *exchange = nullptr);
 
     /* 每个控制周期调一次：收帧 -> 执行命令并应答 -> 掉线保护 -> 周期上报。
      * sim_time_s 是仿真时间（写进上报帧）；wall_ms 是墙钟毫秒（判链路超时，
@@ -51,6 +54,7 @@ private:
     void Ack(const Request &req, uint8_t result);
     void SendJointState(double sim_time_s, uint32_t now_ms);
     void SendPosture();
+    void SendExchangeState(double sim_time_s);
     void PackJoint(int joint, uint8_t *out) const;
 
     // 命令
@@ -59,6 +63,7 @@ private:
     void ProcessDeviceInfo(const Request &req);
     void ProcessSetTarget(const Request &req, uint32_t now_ms);
     void ProcessSetIkTarget(const Request &req, uint32_t now_ms);
+    void ProcessExchangeCommand(const Request &req, uint32_t now_ms);
     void ParamValue(uint16_t id, uint8_t index, uint8_t *value) const;
 
     // 收帧
@@ -70,9 +75,11 @@ private:
 
     Arm &arm_;
     HostLink &link_;
+    ExchangeStation *exchange_ = nullptr;
     uint16_t state_divider_;
     uint16_t divider_count_ = 0;
     uint16_t posture_divider_count_ = 0;
+    uint16_t exchange_divider_count_ = 0;
     uint16_t sequence_ = 0;
     uint32_t last_rx_ms_ = 0;
     uint32_t last_cmd_ms_ = 0;

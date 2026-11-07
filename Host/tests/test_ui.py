@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, Qt  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from armhost.model.backend import MockBackend  # noqa: E402
@@ -452,6 +452,85 @@ class TestHostMultiTurnPanel(unittest.TestCase):
         self.assertAlmostEqual(panel.spins[0].maximum(), 540.0)
         panel.load_current()
         self.assertAlmostEqual(panel.spins[0].value(), 190.0)
+        panel.deleteLater()
+
+
+class TestExchangePanel(unittest.TestCase):
+    def test_phase_enables_only_next_assembly_action(self):
+        from concurrent.futures import Future
+        from types import SimpleNamespace
+
+        from armhost.protocol import ExchangePhase, ExchangeState, ExchangeStateFlag
+        from armhost.ui.exchange_panel import ExchangePanel
+
+        class Ctrl:
+            def __init__(self):
+                self.calls = []
+
+            def exchange_command(self, action, difficulty, q_target_deg, x, y, z, theta, phi, alpha,
+                                 seed, use_pose):
+                self.calls.append(action)
+                f = Future()
+                f.set_result(None)
+                return f
+
+        ctrl = Ctrl()
+        panel = ExchangePanel(ctrl)
+        panel.set_connected(True)
+        state = ExchangeState(ExchangePhase.READY, 2,
+                              ExchangeStateFlag.AVAILABLE | ExchangeStateFlag.POSE_VALID)
+        panel.tick(SimpleNamespace(exchange=state))
+        self.assertTrue(panel.insert_btn.isEnabled())
+        self.assertFalse(panel.lift_btn.isEnabled())
+        self.assertFalse(panel.confirm_btn.isEnabled())
+        panel.insert_btn.click()
+        self.assertEqual(ctrl.calls[-1].name, "INSERT")
+        panel.tick(SimpleNamespace(exchange=state))
+        self.assertIsNone(panel._pending)
+
+        panel.auto_btn.click()
+        self.assertTrue(panel.auto_btn.isChecked())
+        panel.tick(SimpleNamespace(exchange=state))       # ACK 后可能先收到旧状态
+        self.assertTrue(panel.auto_btn.isChecked())
+        panel._auto_state_grace_until = 0.0
+        auto_state = ExchangeState(ExchangePhase.MOVING_POSE, 2,
+                                   ExchangeStateFlag.AVAILABLE | ExchangeStateFlag.AUTO_DEMO)
+        panel.tick(SimpleNamespace(exchange=auto_state))
+        self.assertTrue(panel.auto_btn.isChecked())
+        panel.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        QCoreApplication.processEvents()
+
+    def test_steps_follow_difficulty(self):
+        from types import SimpleNamespace
+
+        from armhost.protocol import ExchangePhase, ExchangeState, ExchangeStateFlag
+        from armhost.ui.exchange_panel import ExchangePanel, steps_html
+
+        self.assertNotIn("上移", steps_html(1, ExchangePhase.READY))
+        self.assertIn("上移", steps_html(2, ExchangePhase.READY))
+        self.assertIn("Q 轴", steps_html(3, ExchangePhase.READY))
+
+        panel = ExchangePanel(SimpleNamespace(exchange_command=lambda *a, **k: None))
+        panel.set_connected(True)
+        flags = ExchangeStateFlag.AVAILABLE | ExchangeStateFlag.POSE_VALID
+        # 一级：插入完成就可以确认，且不显示上移 / P / Q
+        panel.tick(SimpleNamespace(exchange=ExchangeState(ExchangePhase.INSERTED, 1, flags)))
+        self.assertTrue(panel.confirm_btn.isEnabled())
+        self.assertTrue(panel.lift_btn.isHidden())
+        self.assertTrue(panel.p_btn.isHidden())
+        # 二级：插入完成还要上移，上移后才能确认
+        panel.tick(SimpleNamespace(exchange=ExchangeState(ExchangePhase.INSERTED, 2, flags)))
+        self.assertFalse(panel.confirm_btn.isEnabled())
+        self.assertTrue(panel.lift_btn.isEnabled())
+        panel.tick(SimpleNamespace(exchange=ExchangeState(ExchangePhase.LIFTED, 2, flags)))
+        self.assertTrue(panel.confirm_btn.isEnabled())
+        # 三级：上移后还要 P 轴，Q 轴到位才能确认
+        panel.tick(SimpleNamespace(exchange=ExchangeState(ExchangePhase.LIFTED, 3, flags)))
+        self.assertFalse(panel.confirm_btn.isEnabled())
+        self.assertTrue(panel.p_btn.isEnabled())
+        panel.tick(SimpleNamespace(exchange=ExchangeState(ExchangePhase.Q_READY, 3, flags)))
+        self.assertTrue(panel.confirm_btn.isEnabled())
         panel.deleteLater()
 
 

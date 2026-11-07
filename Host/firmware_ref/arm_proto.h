@@ -42,6 +42,9 @@ enum {
     ARM_MSG_PARAM_READ       = 0x28,
     ARM_MSG_PARAM_WRITE      = 0x29,
     ARM_MSG_PARAM_VALUE      = 0x2A,
+    /* ArmSim 仿真扩展；实机固件可回 UNSUPPORTED。 */
+    ARM_MSG_EXCHANGE_COMMAND = 0x30,
+    ARM_MSG_EXCHANGE_STATE   = 0x31,
 };
 
 enum {

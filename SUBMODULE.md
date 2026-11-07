@@ -6,11 +6,16 @@
 
 ```
 7axisArm                    github.com/pun1ru/7axisArm          分支 main
-└── Real/DIYcontroller       github.com/pun1ru/dm_mcV610        分支 7axisarm
-    └── LibSE                github.com/pun1ru/LibSE            默认分支 main
+├── Real/DIYcontroller       github.com/pun1ru/dm_mcV610        分支 7axisarm
+│   └── LibSE                github.com/pun1ru/LibSE            默认分支 main
+└── opensource/rmuc2027_mjarena
+                             github.com/CosmosMount/rmuc2027_mjarena 分支 main
 ```
 
 LibSE 是嵌套在 DIYcontroller 里面的,不能直接从主仓库更新。
+
+`rmuc2027_mjarena` 提供 ArmSim 默认使用的 RMUC2027 场地。它只作为外部依赖，
+修改场地应在该子模块自己的仓库中进行；主仓库只记录其提交指针。
 
 ## 父仓库记录的是什么
 

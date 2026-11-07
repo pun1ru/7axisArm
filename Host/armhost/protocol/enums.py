@@ -27,6 +27,8 @@ class MsgType(IntEnum):
     PARAM_WRITE = 0x29        # host -> mcu
     PARAM_VALUE = 0x2A        # mcu -> host
     # 0x30~0x3F 预留给轨迹 / 仿真同步
+    EXCHANGE_COMMAND = 0x30   # host -> ArmSim，兑换站仿真扩展
+    EXCHANGE_STATE = 0x31     # ArmSim -> host，兑换站状态
 
 
 class ArmState(IntEnum):
@@ -110,6 +112,50 @@ class PostureFlag(IntFlag):
     IK_ACTIVE = 0x08          # 当前处于 HOST_IK
     AUTO_PSI = 0x40           # 当前 HOST_IK 由固件自动选择 ψ
     # bit4~5: 最近一次 IK 状态 0 OK / 1 OutOfReach / 2 RefDegenerate
+
+
+class ExchangeAction(IntEnum):
+    """EXCHANGE_COMMAND.action；仅 ArmSim 扩展协议使用。"""
+    NONE = 0
+    RESET = 1
+    RANDOMIZE = 2
+    MOVE_TO_POSE = 3
+    INSERT = 4
+    LIFT = 5
+    ROTATE_P = 6
+    ROTATE_Q = 7
+    CONFIRM = 8
+    AUTO_DEMO = 9
+    STOP_AUTO = 10
+    FREE = 11          # 撤掉驱动，关节可手动拖动；RESET 重新接管
+
+
+class ExchangePhase(IntEnum):
+    """EXCHANGE_STATE.phase；与 ArmSim ExchangeStation::Phase 一一对应。"""
+    PARKED = 0
+    MOVING_POSE = 1
+    READY = 2
+    INSERTING = 3
+    INSERTED = 4
+    LIFTING = 5
+    LIFTED = 6
+    ROTATING_P = 7
+    P_ROTATED = 8
+    ROTATING_Q = 9
+    Q_READY = 10
+    COMPLETE = 11
+    RESETTING = 12
+
+
+class ExchangeStateFlag(IntFlag):
+    NONE = 0
+    AVAILABLE = 0x01
+    MOVING = 0x02
+    POSE_VALID = 0x04
+    AUTO_DEMO = 0x08
+    COMPLETE = 0x10
+    Q_READY = 0x20
+    FREE = 0x40
 
 
 class AckResult(IntEnum):

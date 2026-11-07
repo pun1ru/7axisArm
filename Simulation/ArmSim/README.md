@@ -1,18 +1,26 @@
 # ArmSim — 七轴臂 MuJoCo 仿真框架
 
 C++17 面向对象实现。控制算法、状态机、上位机协议和实机 `Real/DIYcontroller` 保持一致，
-只把最底下的“CAN 收发 + 电机”换成 MuJoCo 的关节读写。当前接入的模型是
-`../mujoco/BigArm/robot.xml`（由 `../【装配体】单臂/robot.urdf` 生成）。
+只把最底下的“CAN 收发 + 电机”换成 MuJoCo 的关节读写。默认把
+`../mujoco/BigArm/robot.xml`（由 `../【装配体】单臂/robot.urdf` 生成）和兑换站
+合并到 [`../mujoco/scene/plain_floor.xml`](../mujoco/scene/plain_floor.xml)
+普通地面中。默认不加载 2027 mjarena；其他场地仍可通过 `--arena <xml>` 显式指定。
 
 ## 一键运行
 
 运行 `./run.sh`：配置 -> 编译 -> 启动，仿真不限时长，Ctrl-C 退出。
 
 ```bash
-./run.sh                 # 按实时节拍一直跑
+./run.sh                 # 普通地面 + BigArm + 兑换站，按实时节拍一直跑
 ./run.sh --fast          # 不限速
 ./run.sh --host          # 开伪串口 /tmp/armsim-host 等 Host/armhost
 ./run.sh --no-viewer     # 不开 MuJoCo 窗口
+./run.sh --no-arena      # 只加载机械臂，保持原来的调试方式
+./run.sh --arena path/to/field.xml
+./run.sh --arm-position 5 -5 0.01
+./run.sh --exchange-position 4.05 -5 0
+./run.sh --no-exchange   # 只保留场地和机械臂
+./run.sh --full-viewer   # 查看器也加载完整碰撞模型（很慢，仅用于核对）
 ./run.sh ../mujoco/BigArm/robot.xml 10     # 第一个位置参数是模型，第二个是秒数
 ```
 
@@ -33,12 +41,61 @@ C++17 面向对象实现。控制算法、状态机、上位机协议和实机 `
 
 窗口占主线程，仿真循环跑在副线程；ESC 或关窗口退出。没有显示环境会提示并退回无窗口运行。
 启动时的 `libdecor-gtk-WARNING` 是 Wayland 窗口装饰插件的提示，不影响使用。
+若 GNOME/Wayland 环境在创建窗口时因 `org.gnome.settings-daemon.plugins.xsettings`
+直接退出，脚本会在 Wayland + XWayland 可用时自动切换到兼容模式。需要坚持使用
+原生 Wayland 时设置 `ARMSIM_FORCE_X11=0`：
+
+```bash
+ARMSIM_FORCE_X11=0 ./run.sh
+```
 
 窗口需要 `libsimulate.a`（MuJoCo SDK 自带）和 GLFW 两样。GLFW 先找系统的（`apt install libglfw3-dev`），
 再找 `GLFW_ROOT`，最后找 `~/software/mujoco/build` 里 MuJoCo 自带的那份；缺哪样就无窗口构建。
 
 `CMakeLists.txt` 里保留了 Windows（MSVC、复制 `mujoco.dll`）的处理，但没有在 Windows 上验证过。
 
+## 地面与附件合并
+
+`MujocoWorld` 用 MuJoCo C API 的 `mj_parseXML` 分别读取场地和机械臂，再通过
+`mjs_addFrame` / `mjs_attach` 把机械臂附加到场地 `world`，最后用 `mj_compile`
+生成运行时模型。相对网格资源仍各自按原 MJCF 文件所在目录解析，不需要生成中间 XML。
+机械臂 MJCF 自带的无限大 `floor` plane 会在合并前移除，避免与普通地面重复。
+普通地面不包含高精度场地网格，启动和物理步进都比 2027 mjarena 轻得多。默认模型
+没有单独的轻量显示副本，物理模型和 Viewer 使用同一套几何。机械臂默认附加在世界系
+`(5, -5, 0.01) m`，兑换站 O 点位于 `(4.05, -5, 0) m`。
+机械臂名称统一带 `arm/` 前缀，例如 `arm/joint1`、`arm/link8`、`arm/dh8`，避免与场地对象重名。
+ArmSim 的关节配置会自动加前缀，控制器和 Host 协议仍使用原来的 `joint1..joint8` 逻辑名称。
+
+可用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--arena <xml>` | 合并指定场地；场地拥有 timestep、重力和求解器等全局选项 |
+| `--no-arena` | 不合并场地，恢复纯机械臂模型 |
+| `--arm-position X Y Z` | 机械臂附件在世界系的位置，单位 m |
+| `--exchange-position X Y Z` | 兑换站 O 点的世界位置，默认 `4.05 -5 0 m` |
+| `--no-exchange` | 不加载兑换站，Host 的兑换站页显示不可用 |
+| `--full-viewer` | 自定义场地时让 Viewer 显式加载物理模型；普通地面下无额外作用 |
+
+## 科技核心 / 兑换站
+
+`../mujoco/scene/exchange_station.xml` 和机械臂一样以附件方式合并到普通地面；
+物理和 Viewer 使用同一套机构，因此关节位置一致。模型坐标按规则 5.4.3 建立：
+
+- O 为底座正面与台面交线中点，X 指向底座内部，Z 向上；CAD 底面比 O 低 78 mm。
+  默认 `O.z=0`（普通地面）。换成带高地的场地时用 `--exchange-position` 指定。
+- `--exchange-position` 直接设置 O 点；支撑台作为兑换站附件一起移动，因此手动改高度时
+  需要让支撑台底面与当前地面一致。
+- 初始科技核心位姿为 `(x,y,z,θ,φ,α)=(-200,200,800 mm,0°,90°,0°)`。
+- 一级使用固定朝向；二至四级按表 5-10 随机 `x=[-100,0] mm、y=[100,300] mm、`
+  `z=[500,700] mm、θ=[-90,90]°、φ=[0,90]°、α=[-45,45]°`。
+- 装配顺序为插入 100 mm、沿 Z 上移 100 mm、P 轴抬升 90°、Q 轴到目标角、确认。
+  阶段切换同时检查轨迹时间和机构实际位置，避免慢速物理下“轨迹先完成、机构未到位”。
+- 能量单元使用 400 g、95 mm 外径、150 mm 高的视觉模型，并随 P/Q 轴动作。
+
+`ExchangeStation` 只驱动 MJCF 的 position actuator，不直接改 `qpos`。Host 使用
+ArmSim 扩展消息 `0x30/0x31` 收发命令和 10 Hz 状态；协议格式见
+[`Host/docs/02_protocol.md`](../../Host/docs/02_protocol.md)。
 
 ## 关节分工
 

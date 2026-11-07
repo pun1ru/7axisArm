@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "exchange_station.h"
+
 namespace {
 
 constexpr uint8_t kSof0 = 0xA5;
@@ -22,6 +24,8 @@ constexpr uint8_t kMsgArmPosture = 0x13;
 constexpr uint8_t kMsgSetIkTarget = 0x24;
 constexpr uint8_t kMsgParamRead = 0x28;
 constexpr uint8_t kMsgParamValue = 0x2A;
+constexpr uint8_t kMsgExchangeCommand = 0x30;   // ArmSim 扩展，不对应实机固件
+constexpr uint8_t kMsgExchangeState = 0x31;     // ArmSim 扩展，主动上报
 
 constexpr uint32_t kLinkTimeoutMs = 300;   // 超时无帧则退出上位机闭环
 constexpr uint32_t kTaskPeriodMs = 2;
@@ -50,6 +54,15 @@ constexpr size_t kIkTargetSizeLegacy = 32;
 constexpr size_t kIkTargetSize = 64;
 constexpr size_t kPostureSize = 32;
 constexpr uint16_t kPostureDivider = 5;    // 每 5 帧 JOINT_STATE 发一帧 ARM_POSTURE
+constexpr size_t kExchangeCommandSize = 40;
+constexpr size_t kExchangeStateSize = 80;
+constexpr uint16_t kExchangeStateDivider = 10;   // 100 Hz / 10 = 10 Hz
+constexpr uint8_t kExchangeCommandVersion = 1;
+constexpr uint8_t kExchangeStateVersion = 1;
+constexpr uint8_t kExchangeCommandPoseValid = 0x01;
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kExchangeDegToRad = kPi / 180.0;
+constexpr double kExchangeRadToDeg = 180.0 / kPi;
 
 constexpr uint8_t kPostureValid = 0x01;
 constexpr uint8_t kPostureShoulderSingular = 0x02;
@@ -138,6 +151,12 @@ uint16_t GetU16(const uint8_t *in)
     return static_cast<uint16_t>(in[0] | (in[1] << 8));
 }
 
+uint32_t GetU32(const uint8_t *in)
+{
+    return static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8) |
+           (static_cast<uint32_t>(in[2]) << 16) | (static_cast<uint32_t>(in[3]) << 24);
+}
+
 float GetFloat(const uint8_t *in)
 {
     const uint32_t bits = static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8) |
@@ -183,8 +202,9 @@ bool ParamInfo(uint16_t id, uint8_t &type, uint8_t &count)
 
 }  // namespace
 
-Host::Host(Arm &arm, HostLink &link, uint16_t state_divider)
-    : arm_(arm), link_(link), state_divider_(state_divider == 0 ? 1 : state_divider)
+Host::Host(Arm &arm, HostLink &link, uint16_t state_divider, ExchangeStation *exchange)
+    : arm_(arm), link_(link), exchange_(exchange),
+      state_divider_(state_divider == 0 ? 1 : state_divider)
 {
 }
 
@@ -354,6 +374,72 @@ void Host::SendPosture()
     PutFloat(payload + 24, obs.pose.euler_deg[1]);
     PutFloat(payload + 28, obs.pose.euler_deg[2]);
     SendFrame(kMsgArmPosture, payload, sizeof(payload));
+}
+
+/* ArmSim 扩展：兑换站状态，10 Hz。数值单位与规则手册一致，长度 mm、角度 deg。 */
+void Host::SendExchangeState(double sim_time_s)
+{
+    if (exchange_ == nullptr)
+    {
+        return;
+    }
+    const ExchangeStation::Snapshot s = exchange_->GetSnapshot();
+    uint8_t payload[kExchangeStateSize] = {};
+
+    payload[0] = kExchangeStateVersion;
+    payload[1] = ExchangePhaseCode(s.phase);
+    payload[2] = static_cast<uint8_t>(s.difficulty);
+    uint8_t flags = 0x01;   // 兑换站可用
+    if (s.moving)
+    {
+        flags |= 0x02;
+    }
+    if (s.phase == ExchangeStation::Phase::Ready || s.phase == ExchangeStation::Phase::Inserting ||
+        s.phase == ExchangeStation::Phase::Inserted || s.phase == ExchangeStation::Phase::Lifting ||
+        s.phase == ExchangeStation::Phase::Lifted || s.phase == ExchangeStation::Phase::RotatingP ||
+        s.phase == ExchangeStation::Phase::PRotated || s.phase == ExchangeStation::Phase::RotatingQ ||
+        s.phase == ExchangeStation::Phase::QReady || s.phase == ExchangeStation::Phase::Complete)
+    {
+        flags |= 0x04;      // 已生成/接收目标位姿
+    }
+    if (s.auto_demo)
+    {
+        flags |= 0x08;
+    }
+    if (s.phase == ExchangeStation::Phase::Complete)
+    {
+        flags |= 0x10;
+    }
+    if (s.phase == ExchangeStation::Phase::QReady || s.phase == ExchangeStation::Phase::Complete)
+    {
+        flags |= 0x20;
+    }
+    if (s.free)
+    {
+        flags |= 0x40;      // 关节已释放，可手动拖动
+    }
+    payload[3] = flags;
+
+    PutFloat(payload + 4, static_cast<float>(sim_time_s));
+    PutFloat(payload + 8, static_cast<float>(s.pose.x_m * 1000.0));
+    PutFloat(payload + 12, static_cast<float>(s.pose.y_m * 1000.0));
+    PutFloat(payload + 16, static_cast<float>(s.pose.z_m * 1000.0));
+    PutFloat(payload + 20, static_cast<float>(s.pose.theta_rad * kExchangeRadToDeg));
+    PutFloat(payload + 24, static_cast<float>(s.pose.phi_rad * kExchangeRadToDeg));
+    PutFloat(payload + 28, static_cast<float>(s.pose.alpha_rad * kExchangeRadToDeg));
+    PutFloat(payload + 32, static_cast<float>(s.insert_m * 1000.0));
+    PutFloat(payload + 36, static_cast<float>(s.lift_m * 1000.0));
+    PutFloat(payload + 40, static_cast<float>(s.p_rad * kExchangeRadToDeg));
+    PutFloat(payload + 44, static_cast<float>(s.q_rad * kExchangeRadToDeg));
+    PutFloat(payload + 48, static_cast<float>(s.q_target_deg));
+    PutFloat(payload + 52, static_cast<float>(s.target_pose.x_m * 1000.0));
+    PutFloat(payload + 56, static_cast<float>(s.target_pose.y_m * 1000.0));
+    PutFloat(payload + 60, static_cast<float>(s.target_pose.z_m * 1000.0));
+    PutFloat(payload + 64, static_cast<float>(s.target_pose.theta_rad * kExchangeRadToDeg));
+    PutFloat(payload + 68, static_cast<float>(s.target_pose.phi_rad * kExchangeRadToDeg));
+    PutFloat(payload + 72, static_cast<float>(s.target_pose.alpha_rad * kExchangeRadToDeg));
+    PutU32(payload + 76, static_cast<uint32_t>(s.seed));
+    SendFrame(kMsgExchangeState, payload, sizeof(payload));
 }
 
 /*--------------------------------------参数读取--------------------------------------*/
@@ -560,6 +646,66 @@ void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
     Ack(req, result);
 }
 
+/* ArmSim 扩展命令，payload 共 40 B：
+ * 0 version | 1 action | 2 difficulty | 3 flags(bit0=pose valid) | 4 q_target_deg f32
+ * 8 seed u32 | 12 x_mm | 16 y_mm | 20 z_mm | 24 theta_deg | 28 phi_deg
+ * 32 alpha_deg | 36 reserved u32
+ */
+void Host::ProcessExchangeCommand(const Request &req, uint32_t /*now_ms*/)
+{
+    uint8_t result = kAckOk;
+
+    if (exchange_ == nullptr)
+    {
+        result = kAckUnsupported;
+    }
+    else if (req.length != kExchangeCommandSize)
+    {
+        result = kAckBadLength;
+    }
+    else
+    {
+        const uint8_t raw_action = req.payload[1];
+        const uint8_t difficulty = req.payload[2];
+        const float q_target_deg = GetFloat(req.payload + 4);
+        const float x_mm = GetFloat(req.payload + 12);
+        const float y_mm = GetFloat(req.payload + 16);
+        const float z_mm = GetFloat(req.payload + 20);
+        const float theta_deg = GetFloat(req.payload + 24);
+        const float phi_deg = GetFloat(req.payload + 28);
+        const float alpha_deg = GetFloat(req.payload + 32);
+
+        if (req.payload[0] != kExchangeCommandVersion || raw_action > 11U ||
+            difficulty < 1U || difficulty > 4U || !std::isfinite(q_target_deg) ||
+            !std::isfinite(x_mm) || !std::isfinite(y_mm) || !std::isfinite(z_mm) ||
+            !std::isfinite(theta_deg) || !std::isfinite(phi_deg) ||
+            !std::isfinite(alpha_deg))
+        {
+            result = kAckBadParam;
+        }
+        else
+        {
+            ExchangeStation::Command command;
+            command.action = static_cast<ExchangeStation::Action>(raw_action);
+            command.difficulty = static_cast<int>(difficulty);
+            command.q_target_deg = q_target_deg;
+            command.seed = GetU32(req.payload + 8);
+            command.use_pose = (req.payload[3] & kExchangeCommandPoseValid) != 0U;
+            command.pose.x_m = static_cast<double>(x_mm) * 0.001;
+            command.pose.y_m = static_cast<double>(y_mm) * 0.001;
+            command.pose.z_m = static_cast<double>(z_mm) * 0.001;
+            command.pose.theta_rad = static_cast<double>(theta_deg) * kExchangeDegToRad;
+            command.pose.phi_rad = static_cast<double>(phi_deg) * kExchangeDegToRad;
+            command.pose.alpha_rad = static_cast<double>(alpha_deg) * kExchangeDegToRad;
+            if (!exchange_->HandleCommand(command))
+            {
+                result = kAckBadParam;
+            }
+        }
+    }
+    Ack(req, result);
+}
+
 void Host::ProcessRequest(const Request &req, uint32_t now_ms)
 {
     for (size_t i = 0; i < reply_count_; ++i)
@@ -588,6 +734,9 @@ void Host::ProcessRequest(const Request &req, uint32_t now_ms)
         break;
     case kMsgSetIkTarget:
         ProcessSetIkTarget(req, now_ms);
+        break;
+    case kMsgExchangeCommand:
+        ProcessExchangeCommand(req, now_ms);
         break;
     default:
         Ack(req, kAckUnsupported);
@@ -688,6 +837,12 @@ void Host::Step(double sim_time_s, uint32_t wall_ms)
     {
         posture_divider_count_ = 0;
         SendPosture();
+    }
+
+    if (exchange_ != nullptr && ++exchange_divider_count_ >= kExchangeStateDivider)
+    {
+        exchange_divider_count_ = 0;
+        SendExchangeState(sim_time_s);
     }
 
     if (++divider_count_ >= state_divider_)

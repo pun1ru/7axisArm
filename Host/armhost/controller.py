@@ -211,6 +211,25 @@ class MonitorController:
         fut.add_done_callback(done)
         return fut
 
+    def exchange_command(self, action, difficulty: int = 1, q_target_deg: float = 0.0,
+                         x_mm: float = -200.0, y_mm: float = 200.0, z_mm: float = 800.0,
+                         theta_deg: float = 0.0, phi_deg: float = 90.0,
+                         alpha_deg: float = 0.0, seed: int = 0,
+                         use_pose: bool = False):
+        b = self.backend
+        if b is None or not hasattr(b, "exchange_command"):
+            self._push("warn", "当前数据源不支持兑换站控制")
+            return None
+        fut = b.exchange_command(action, difficulty, q_target_deg, x_mm, y_mm, z_mm,
+                                 theta_deg, phi_deg, alpha_deg, seed, use_pose)
+
+        def done(f):
+            e = f.exception()
+            self._push("exchange", f"兑换站命令已确认（{action}）" if e is None
+                       else f"兑换站命令失败：{e}")
+        fut.add_done_callback(done)
+        return fut
+
     def capture_snapshot(self, path=None):
         s = self.latest()
         if s is None:
