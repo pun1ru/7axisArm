@@ -64,66 +64,15 @@ double Norm3(const Vec6 &v, int offset)
     return std::sqrt(v[offset] * v[offset] + v[offset + 1] * v[offset + 1] + v[offset + 2] * v[offset + 2]);
 }
 
-double Det6(std::array<std::array<double, 6>, 6> a)
-{
-    double det = 1.0;
-
-    for (int c = 0; c < 6; ++c)
-    {
-        int pivot = c;
-        for (int r = c + 1; r < 6; ++r)
-        {
-            if (std::fabs(a[r][c]) > std::fabs(a[pivot][c])) pivot = r;
-        }
-        if (std::fabs(a[pivot][c]) < 1e-300) return 0.0;
-        if (pivot != c)
-        {
-            std::swap(a[pivot], a[c]);
-            det = -det;
-        }
-        det *= a[c][c];
-        for (int r = c + 1; r < 6; ++r)
-        {
-            const double f = a[r][c] / a[c][c];
-            for (int k = c; k < 6; ++k) a[r][k] -= f * a[c][k];
-        }
-    }
-    return det;
-}
-
-/* 七个关节全自由时 J（6×7）的零空间向量 n：广义叉积 n_i = (−1)^i·det(J 删去第 i 列)，
- * 因此 J·n = 0 严格成立，不依赖阻尼。‖n‖ = √det(J Jᵀ) 是可操作度，奇异时趋于 0（此时零空间退化，返回 0）。 */
-double NullVector(const Jacobian6x7 &jac, Vec7 &n)
-{
-    double sum_sq = 0.0;
-
-    for (int skip = 0; skip < kJointCount; ++skip)
-    {
-        Mat6 minor{};
-        int col = 0;
-        for (int c = 0; c < kJointCount; ++c)
-        {
-            if (c == skip) continue;
-            for (int r = 0; r < 6; ++r)
-            {
-                minor[static_cast<size_t>(r)][static_cast<size_t>(col)] = jac[static_cast<size_t>(r)][static_cast<size_t>(c)];
-            }
-            ++col;
-        }
-        n[static_cast<size_t>(skip)] = ((skip & 1) ? -1.0 : 1.0) * Det6(minor);
-        sum_sq += n[static_cast<size_t>(skip)] * n[static_cast<size_t>(skip)];
-    }
-    return std::sqrt(sum_sq);
-}
-
 /* 自由关节集合上的加权阻尼解：dq_task = J̄e，J̄ = W⁻¹Jᵀ(J W⁻¹ Jᵀ + λ²I)⁻¹。
- * dq_null 是 z 在 J 零空间上的 W 加权投影：七个关节全自由且可操作度够大时才有（1 维零空间，精确投影），
- * 否则为 0。不用 (I − J̄J)：J̄ 带阻尼时它不是投影，会把 z 漏进任务空间，远离参考构型时把任务项顶住。
+ * dq_null 是 z 在 J 零空间上的 W 加权投影：七个关节全自由时才有，用无阻尼伪逆求精确投影，否则为 0。
+ * 不用带阻尼的 (I − J̄J)：J̄ 带阻尼时它不是投影，会把 z 漏进任务空间，远离参考构型时把任务项顶住。
  * 固定关节（free[i] = false）不参与，两个输出里对应位置为 0。 */
 bool SolveFreeSet(const Jacobian6x7 &jac, const Vec7 &w_inv, const std::array<bool, kJointCount> &is_free,
                   const Vec6 &e, const Vec7 &z, double damping, Vec7 &dq_task, Vec7 &dq_null)
 {
-    Mat6 a{};
+    Mat6 a0{};   // J W⁻¹ Jᵀ，无阻尼，零空间投影用
+    Mat6 a{};    // a0 + λ²I，任务项用
     Vec6 y{};
     bool all_free = true;
 
@@ -139,6 +88,7 @@ bool SolveFreeSet(const Jacobian6x7 &jac, const Vec7 &w_inv, const std::array<bo
                     sum += w_inv[static_cast<size_t>(i)] * jac[r][i] * jac[c][i];
                 }
             }
+            a0[r][c] = sum;
             a[r][c] = sum + (r == c ? damping * damping : 0.0);
         }
     }
@@ -165,27 +115,48 @@ bool SolveFreeSet(const Jacobian6x7 &jac, const Vec7 &w_inv, const std::array<bo
         dq_task[idx] = w_inv[idx] * task;
     }
 
-    /* 零空间项：7 个关节全自由时零空间 1 维 = span(n)，z 在其上做 W 加权投影 c·n，c = nᵀWz / nᵀWn。
-     * 有关节被限位固定后只剩 6 个自由关节，没有冗余度，零空间项为 0 */
-    Vec7 n{};
-    if (all_free && NullVector(jac, n) > 1e-9)
+    /* 零空间项：无阻尼加权伪逆的投影 dq_null = z − W⁻¹Jᵀ(J W⁻¹ Jᵀ)⁻¹ J z。
+     * 无阻尼时 N = I − J⁺J 是精确的 W 加权投影，J·dq_null = 0。J W⁻¹ Jᵀ 的 Cholesky 失败（秩亏）时零空间项为 0。
+     * 有关节被限位固定后只剩 6 个自由关节，没有冗余度，零空间项为 0。
+     * 保护：近奇异时数值放大可能使 ‖dq_null‖_W > ‖z‖_W（W 加权投影不会放大），超过时按比例缩回。 */
+    if (all_free)
     {
-        double num = 0.0;
-        double den = 0.0;
+        Vec6 jz{};
+        Vec6 u{};
 
-        for (int i = 0; i < kJointCount; ++i)
-        {
-            const size_t idx = static_cast<size_t>(i);
-            const double w = 1.0 / w_inv[idx];
-
-            num += n[idx] * w * z[idx];
-            den += n[idx] * w * n[idx];
-        }
-        if (den > 0.0)
+        for (int r = 0; r < 6; ++r)
         {
             for (int i = 0; i < kJointCount; ++i)
             {
-                dq_null[static_cast<size_t>(i)] = n[static_cast<size_t>(i)] * (num / den);
+                jz[r] += jac[r][i] * z[static_cast<size_t>(i)];
+            }
+        }
+        if (SolveSpd6(a0, jz, u))
+        {
+            double null_sq = 0.0;
+            double z_sq = 0.0;
+
+            for (int i = 0; i < kJointCount; ++i)
+            {
+                const size_t idx = static_cast<size_t>(i);
+                double proj = 0.0;
+
+                for (int r = 0; r < 6; ++r)
+                {
+                    proj += jac[r][i] * u[r];
+                }
+                dq_null[idx] = z[idx] - w_inv[idx] * proj;
+                null_sq += dq_null[idx] * dq_null[idx] / w_inv[idx];
+                z_sq += z[idx] * z[idx] / w_inv[idx];
+            }
+            if (null_sq > z_sq)
+            {
+                const double shrink = std::sqrt(z_sq / null_sq);
+
+                for (double &v : dq_null)
+                {
+                    v *= shrink;
+                }
             }
         }
     }

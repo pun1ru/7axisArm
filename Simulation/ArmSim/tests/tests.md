@@ -38,13 +38,15 @@ python3 -I e2e_numeric.py                                                       
 ./out/exp_b 200             # T5
 ./out/diag                  # T6
 python3 -I sim_cl.py        # T7，11 个目标 × 两种方式，约 5 分钟；目标列表见 targets.csv
-./out/cmp_cross 600; ./out/cmp_undamped 600                                               # T8
-./out/proj_cross; ./out/proj_undamped
+./out/cmp 600                                                                             # T8
+./out/proj
 ```
+
+嵌入式 C 端口的对拍（T9，MSVC，不依赖 MuJoCo），构建方法见 `ik_numeric_c_golden.cpp` 文件头：
+同一组随机输入分别喂给 ArmSim 的 `ik_numeric.cpp` 和 `Real/DIYcontroller/LibSE/Algorithm/Kinematics/ik_numeric.c`，改任一边的算法后都要重跑。
 
 随机数种子固定，结果可复现，但依赖当前的 `NumericIkParam` 默认值。
 `./out/dump > targets.csv` 会重新生成 T7 用的目标，仓库里提交的 `targets.csv` 是实际用过的那一份。
-`out/ik_numeric_undamped.cpp` 由 `make_undamped_variant.py` 从仓库的 `ik_numeric.cpp` 生成，只用于 T8，不进固件。
 
 ## 3. T1 算法单元测试
 
@@ -186,7 +188,12 @@ R 两种方式在离线都能到；N 仅数值解能到；A 仅当前分支解�
 步长限幅 5° 会把异常量截掉，漂移又混入了步长二阶项，float32 的前向运动学也让"精确奇异"没有真正奇异。保留它只是为了记录，结论以 `proj.cpp` 为准。
 
 结论：两种实现没有谁全面占优。叉积在肘伸直处会关掉零空间项（D4），无阻尼变体在肩腕同时奇异处有数值放大。
-建议改成无阻尼变体并加一行保护（`‖dq_null‖_W > ‖z‖_W` 时按比例缩回），代码更少、更快。**尚未实施。**
+建议改成无阻尼变体并加一行保护（`‖dq_null‖_W > ‖z‖_W` 时按比例缩回），代码更少、更快。
+
+**已实施。** 仓库的 `ik_numeric.cpp` 现在用无阻尼加权伪逆投影（删掉了 `Det6` 和 `NullVector`），并带上述保护。
+实施后重跑：`ik_numeric_test` 的结果和改前逐项相同（441 周期收敛、随机目标 74/100 收敛、ALL PASSED）；
+`proj` 在所有位形上放大都没有超过 1（肩腕同时奇异最大 0.891），肘接近伸直时 dq 不再被置 0（精确伸直 1/300），
+泄漏最大 5.5e-8 m。`cmp` 没有重跑，上表「无阻尼变体」一列是改前的数据。
 
 ## 9. 缺陷记录
 
@@ -195,7 +202,7 @@ R 两种方式在离线都能到；N 仅数值解能到；A 仅当前分支解�
 | D1 | 零空间项用 `I − J̄J` 当投影，J̄ 带阻尼时它漏进任务空间，数值解在远处目标上停住 | 已修，有回归测试 |
 | D2 | 两处测试代码把"没收敛"也判成收敛 | 已修 |
 | D3 | `max_lead_deg` 逐关节钳位，在软关节上把路径带歪，仿真里数值解姿态误差很大 | **未修，等决定** |
-| D4 | 叉积零空间向量在肘接近伸直时被 `‖n‖ < 1e-9` 关掉 | **未修，见 §8 的建议** |
+| D4 | 叉积零空间向量在肘接近伸直时被 `‖n‖ < 1e-9` 关掉 | 已修：改用无阻尼伪逆投影加保护，见 §8 |
 
 **D1 过程。** 实验 A 第一次跑，600 个可达目标只有 12.8% 收敛，远低于单个目标的结果。`diag.cpp` 对 300 个目标换参数重跑
 （"停住" = 最后 50 周期最大关节增量 < 1e-3°）：
@@ -225,7 +232,9 @@ R 两种方式在离线都能到；N 仅数值解能到；A 仅当前分支解�
 
 ## 10. 没有覆盖的内容
 
-- **实机。** 数值解只在 ArmSim 里，实机固件（`Real/DIYcontroller`）没有对应实现，也没有测过 STM32H723 上每周期的耗时。实机的 `TASK_ARM_PERIOD_MS` 是 2 ms，与仿真一致。
+- **实机。** 固件已有 C 端口（`ik_numeric.c`、`arm_ik.c`），PC 上用 MSVC 与 ArmSim 对拍结果完全相同，armclang 编译通过；
+  但没有上板，没测过 STM32H723 上每周期的耗时，也没验证 ARM 的 `cosf` 与 MSVC 的 float 舍入差异。实机的 `TASK_ARM_PERIOD_MS` 是 2 ms，与仿真一致。
+  固件侧的 `SET_IK_TARGET` 协议还没接，`Arm_SetNumericIkTarget` 目前没有调用方。
 - **调坏的 PID。** 只有 D3 里 J6 本来就偏软的情形，没有系统地扫描增益。
 - **固件非法 ik_method。** 回 `BAD_PARAM` 的分支没有走线测试，见 T3。
 - **Host 面板。** 求解方式下拉框只有界面单元测试，没有人工点击过。
