@@ -23,7 +23,7 @@ from ..protocol import (Ack, AckResult, ClearTorque, DecodeError, DeviceInfo, De
                         Estop, EstopAction, ExchangeCommand, Frame, FrameFlag, FrameParser,
                         Heartbeat, MsgType, ParamRead, ParamValue, ParamWrite, SetHostTarget,
                         SetIkTarget, SetJointTorque, TorqueItem, decode_frame, encode_frame)
-from ..protocol.enums import HostIkAction, HostTargetAction, ParamType
+from ..protocol.enums import HostIkAction, HostTargetAction, IkMethod, ParamType
 from ..protocol.params import BY_ID
 from .hexlog import HexLog
 from .mirror import ArmMirror
@@ -165,11 +165,12 @@ class ArmLink:
 
     def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
                       pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
-                      cost_weights: tuple[float, ...] | None = None) -> Future:
+                      cost_weights: tuple[float, ...] | None = None,
+                      method: IkMethod | int = IkMethod.ANALYTIC) -> Future:
         weights = cost_weights if cost_weights is not None else (1.0,) * 7
         return self._request(SetIkTarget(HostIkAction.SET, int(branch), float(x), float(y), float(z),
                                          float(roll), float(pitch), float(yaw), float(psi_deg),
-                                         bool(auto_psi), tuple(weights)), retries=0)
+                                         bool(auto_psi), tuple(weights), IkMethod(method)), retries=0)
 
     def stop_ik(self) -> Future:
         return self._request(SetIkTarget(HostIkAction.STOP), retries=0)

@@ -103,6 +103,12 @@ class HostIkAction(IntEnum):
     STOP = 1                  # 退出 HOST_IK，回到 HOST
 
 
+class IkMethod(IntEnum):
+    """SET_IK_TARGET 的求解方式"""
+    ANALYTIC = 0              # 解析解：一次算出目标关节角，臂角 ψ 由上位机给定或自动选择
+    NUMERIC = 1               # 数值解：固件每周期迭代一小步（加权 DLS + 零空间 + 限位/步长约束）
+
+
 class PostureFlag(IntFlag):
     """ARM_POSTURE.flags"""
     NONE = 0
@@ -111,6 +117,7 @@ class PostureFlag(IntFlag):
     WRIST_SINGULAR = 0x04     # 最近一次 IK 解处于腕奇异
     IK_ACTIVE = 0x08          # 当前处于 HOST_IK
     AUTO_PSI = 0x40           # 当前 HOST_IK 由固件自动选择 ψ
+    NUMERIC_IK = 0x80         # 当前 HOST_IK 使用数值解
     # bit4~5: 最近一次 IK 状态 0 OK / 1 OutOfReach / 2 RefDegenerate
 
 
@@ -127,7 +134,6 @@ class ExchangeAction(IntEnum):
     CONFIRM = 8
     AUTO_DEMO = 9
     STOP_AUTO = 10
-    FREE = 11          # 撤掉驱动，关节可手动拖动；RESET 重新接管
 
 
 class ExchangePhase(IntEnum):
@@ -155,7 +161,6 @@ class ExchangeStateFlag(IntFlag):
     AUTO_DEMO = 0x08
     COMPLETE = 0x10
     Q_READY = 0x20
-    FREE = 0x40
 
 
 class AckResult(IntEnum):

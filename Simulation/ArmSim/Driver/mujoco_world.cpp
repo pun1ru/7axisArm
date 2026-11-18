@@ -317,6 +317,26 @@ void MujocoWorld::SetJointForce(int handle, double force)
     data_->qfrc_applied[joint_.at(handle).dof] = std::isnan(force) ? 0.0 : force;
 }
 
+bool MujocoWorld::SetJointPosition(const std::string &name, double position)
+{
+    const int id = mj_name2id(model_, mjOBJ_JOINT, name.c_str());
+    if (id < 0 || !std::isfinite(position))
+    {
+        return false;
+    }
+    const int qpos = model_->jnt_qposadr[id];
+    const int dof = model_->jnt_dofadr[id];
+    data_->qpos[qpos] = position;
+    data_->qvel[dof] = 0.0;
+    return true;
+}
+
+void MujocoWorld::Forward()
+{
+    mj_forward(model_, data_);
+    SyncViewerState();
+}
+
 int MujocoWorld::BindActuator(const std::string &name)
 {
     const int id = mj_name2id(model_, mjOBJ_ACTUATOR, name.c_str());

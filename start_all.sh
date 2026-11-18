@@ -6,10 +6,11 @@
 #   ./start_all.sh --no-viewer     不打开 MuJoCo 窗口
 #   ./start_all.sh --no-arena      不加载地面/兑换站，只运行机械臂
 #   ./start_all.sh --arena FILE    使用指定场地
-#   ./start_all.sh --arm-position X Y Z
 #   ./start_all.sh --exchange-position X Y Z
+#   ./start_all.sh --exchange-pose X Y Z THETA PHI ALPHA
+#   ./start_all.sh --arm-base-pose X Y Z
+#   ./start_all.sh --arm-position X Y Z    (世界坐标高级覆盖)
 #   ./start_all.sh --no-exchange   不加载兑换站
-#   ./start_all.sh --exchange-free 启动时释放兑换站关节，可在窗口里拖动
 #   ./start_all.sh --full-viewer   查看器也加载完整碰撞模型（很慢）
 #   ./start_all.sh --no-build      跳过编译，直接运行已有 build/armsim
 #   ./start_all.sh -- --log DEBUG   -- 后面的参数原样传给 Host
@@ -48,9 +49,6 @@ while (($#)); do
         --no-exchange)
             armsim_args+=(--no-exchange)
             ;;
-        --exchange-free)
-            armsim_args+=(--exchange-free)
-            ;;
         --full-viewer)
             armsim_args+=(--full-viewer)
             ;;
@@ -78,11 +76,27 @@ while (($#)); do
             armsim_args+=(--exchange-position "$2" "$3" "$4")
             shift 3
             ;;
+        --exchange-pose)
+            if (($# < 7)); then
+                echo "[start_all] --exchange-pose 需要 X Y Z THETA PHI ALPHA 六个数" >&2
+                exit 2
+            fi
+            armsim_args+=(--exchange-pose "$2" "$3" "$4" "$5" "$6" "$7")
+            shift 6
+            ;;
+        --arm-base-pose)
+            if (($# < 4)); then
+                echo "[start_all] --arm-base-pose 需要 X Y Z 三个数（mm）" >&2
+                exit 2
+            fi
+            armsim_args+=(--arm-base-pose "$2" "$3" "$4")
+            shift 3
+            ;;
         --no-build)
             do_build=0
             ;;
         -h|--help)
-            sed -n '2,14p' "$0"
+            sed -n '2,19p' "$0"
             exit 0
             ;;
         --)

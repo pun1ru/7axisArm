@@ -86,10 +86,10 @@ class SimDevice:
         self.ik_branch = 0
         self.ik_psi_deg = 0.0
         self.ik_auto_psi = False
+        self.ik_method = 0
         self.ik_cost_weights = (1.0,) * 7
         self.ik_pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.exchange_phase = ExchangePhase.PARKED
-        self.exchange_free = False
         self.exchange_difficulty = 1
         self.exchange_pose = [-200.0, 200.0, 800.0, 0.0, 90.0, 0.0]
         self.exchange_target = list(self.exchange_pose)
@@ -262,6 +262,8 @@ class SimDevice:
             flags |= PostureFlag.IK_ACTIVE
             if self.ik_auto_psi:
                 flags |= PostureFlag.AUTO_PSI
+            if self.ik_method == 1:
+                flags |= PostureFlag.NUMERIC_IK
             branch = self.ik_branch
             pose = self.ik_pose
             psi = self.ik_psi_deg
@@ -300,8 +302,6 @@ class SimDevice:
             flags |= ExchangeStateFlag.COMPLETE
         if self.exchange_phase in (ExchangePhase.Q_READY, ExchangePhase.COMPLETE):
             flags |= ExchangeStateFlag.Q_READY
-        if self.exchange_free:
-            flags |= ExchangeStateFlag.FREE
         return ExchangeState(
             self.exchange_phase, self.exchange_difficulty, flags, now - self._t0,
             *self.exchange_pose, self.exchange_insert_mm, self.exchange_lift_mm,
@@ -442,7 +442,7 @@ class SimDevice:
             if not 0 <= m.branch < 8 or not all(math.isfinite(v) for v in values):
                 return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
             if not all(math.isfinite(v) and v >= 0.0 for v in m.cost_weights) \
-                    or (m.auto_psi and sum(m.cost_weights) <= 0.0):
+                    or ((m.auto_psi or m.method == 1) and sum(m.cost_weights) <= 0.0):
                 return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
             if self.arm_state == ArmState.HOST:
                 for i, joint in enumerate(self.joints):
@@ -454,6 +454,7 @@ class SimDevice:
             self.ik_pose = values[:6]
             self.ik_psi_deg = m.psi_deg
             self.ik_auto_psi = bool(m.auto_psi)
+            self.ik_method = int(m.method)
             self.ik_cost_weights = tuple(m.cost_weights)
             self._last_cmd = now
             return Ack(seq, m.TYPE, AckResult.OK, 0)
@@ -477,7 +478,6 @@ class SimDevice:
         if isinstance(m, ExchangeCommand):
             action = ExchangeAction(m.action)
             if action == ExchangeAction.RESET:
-                self.exchange_free = False
                 self.exchange_phase = ExchangePhase.PARKED
                 self.exchange_pose = [-200.0, 200.0, 800.0, 0.0, 90.0, 0.0]
                 self.exchange_target = list(self.exchange_pose)
@@ -529,10 +529,6 @@ class SimDevice:
                     self.exchange_phase = ExchangePhase.READY
             elif action == ExchangeAction.STOP_AUTO:
                 self.exchange_auto = False
-            elif action == ExchangeAction.FREE:
-                self.exchange_free = True
-                self.exchange_auto = False
-                self.exchange_phase = ExchangePhase.PARKED
             else:
                 return Ack(seq, m.TYPE, AckResult.BAD_PARAM, 0)
             return Ack(seq, m.TYPE, AckResult.OK, 0)

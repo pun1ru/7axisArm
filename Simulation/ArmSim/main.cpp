@@ -44,10 +44,11 @@ constexpr int kMonitorEverySteps = 50;          // 100 ms
 constexpr const char *kHostLinkPath = "/tmp/armsim-host";
 constexpr const char *kArenaModelPrefix = "arm/";
 constexpr const char *kExchangeModelPrefix = "exchange/";
-constexpr std::array<double, 3> kDefaultArmPosition{{5.0, -5.0, 0.01}};
 /* O 为兑换站底座正面与战场地面交线中点（规则 5.4.3）。普通地面场景里地面就是 z=0；
  * 换成带高地的场地时用 --exchange-position 指定。 */
 constexpr std::array<double, 3> kDefaultExchangePosition{{4.05, -5.0, 0.0}};
+/* 机械臂基座坐标系相对兑换站 OXYZ 的位置，单位 mm。 */
+constexpr std::array<double, 3> kDefaultArmBasePoseMm{{200.0, 0.0, 300.0}};
 constexpr uint16_t kHostStateDivider = 5;       // 2 ms * 5 = 100 Hz，与实机相同
 constexpr int kSyncEverySteps = 17;             // 每 17 步（34 ms）把状态同步给窗口一次
 
@@ -290,13 +291,15 @@ void PrintUsage(const char *prog)
                 "  --arena XML  合并指定场地（默认普通 MuJoCo 地面）\n"
                 "  --no-arena   只加载机械臂模型\n"
                 "  --arm-position X Y Z\n"
-                "               机械臂在场地世界系的位置，默认 5 -5 0.01 m\n"
+                "               直接指定机械臂基座的世界位置（高级覆盖）\n"
+                "  --arm-base-pose X Y Z\n"
+                "               机械臂基座在兑换站 OXYZ 中的位置，单位 mm，默认 200 0 300\n"
                 "  --exchange-position X Y Z\n"
                 "               兑换站装配坐标系原点 O 的世界位置，默认 4.05 -5 0 m\n"
+                "  --exchange-pose X Y Z THETA PHI ALPHA\n"
+                "               科技核心 E 相对 O 的初始位姿，默认 -200 200 800 0 90 0\n"
                 "  --no-exchange\n"
-                "               不加载兑换站\n"
-                "  --exchange-free\n"
-                "               启动时释放兑换站关节（可在窗口里手动拖动；Host 点“复位”重新接管）\n",
+                "               不加载兑换站\n",
                 prog, ARMSIM_DEFAULT_XML,
                 ARMSIM_DEFAULT_ARENA[0] == '\0' ? "未配置" : ARMSIM_DEFAULT_ARENA,
                 kHostLinkPath);
@@ -309,15 +312,17 @@ int main(int argc, char **argv)
     const char *xml_path = ARMSIM_DEFAULT_XML;
     std::string arena_path = ARMSIM_DEFAULT_ARENA;
     std::string exchange_xml_path = ARMSIM_DEFAULT_EXCHANGE;
-    std::array<double, 3> arm_position = kDefaultArmPosition;
+    std::array<double, 3> arm_position{};
+    std::array<double, 3> arm_base_pose_mm = kDefaultArmBasePoseMm;
     std::array<double, 3> exchange_position = kDefaultExchangePosition;
+    std::array<double, 6> exchange_initial_values{{-200.0, 200.0, 800.0, 0.0, 90.0, 0.0}};
     double duration_s = std::numeric_limits<double>::infinity();
     bool realtime = true;
     bool host_mode = false;
     bool use_viewer = true;
     bool full_viewer = false;
     bool use_exchange = true;
-    bool exchange_free = false;
+    bool arm_position_override = false;
     int positional = 0;
 
     for (int i = 1; i < argc; ++i)
@@ -355,10 +360,6 @@ int main(int argc, char **argv)
         {
             use_exchange = false;
         }
-        else if (std::strcmp(argv[i], "--exchange-free") == 0)
-        {
-            exchange_free = true;
-        }
         else if (std::strcmp(argv[i], "--arm-position") == 0)
         {
             if (i + 3 >= argc)
@@ -374,6 +375,26 @@ int main(int argc, char **argv)
                 if (end == text || *end != '\0' || !std::isfinite(arm_position[axis]))
                 {
                     std::fprintf(stderr, "无效的机械臂位置 %s\n", text);
+                    return 2;
+                }
+            }
+            arm_position_override = true;
+        }
+        else if (std::strcmp(argv[i], "--arm-base-pose") == 0)
+        {
+            if (i + 3 >= argc)
+            {
+                std::fprintf(stderr, "--arm-base-pose 需要 X Y Z 三个数（mm）\n");
+                return 2;
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const char *text = argv[++i];
+                char *end = nullptr;
+                arm_base_pose_mm[axis] = std::strtod(text, &end);
+                if (end == text || *end != '\0' || !std::isfinite(arm_base_pose_mm[axis]))
+                {
+                    std::fprintf(stderr, "无效的机械臂基座 OXYZ 位置 %s\n", text);
                     return 2;
                 }
             }
@@ -397,6 +418,25 @@ int main(int argc, char **argv)
                 }
             }
         }
+        else if (std::strcmp(argv[i], "--exchange-pose") == 0)
+        {
+            if (i + 6 >= argc)
+            {
+                std::fprintf(stderr, "--exchange-pose 需要 X Y Z THETA PHI ALPHA 六个数\n");
+                return 2;
+            }
+            for (int k = 0; k < 6; ++k)
+            {
+                const char *text = argv[++i];
+                char *end = nullptr;
+                exchange_initial_values[k] = std::strtod(text, &end);
+                if (end == text || *end != '\0' || !std::isfinite(exchange_initial_values[k]))
+                {
+                    std::fprintf(stderr, "无效的兑换站初始位姿 %s\n", text);
+                    return 2;
+                }
+            }
+        }
         else if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0 || positional >= 2)
         {
             PrintUsage(argv[0]);
@@ -409,6 +449,30 @@ int main(int argc, char **argv)
         else
         {
             duration_s = std::atof(argv[i]);
+        }
+    }
+    ExchangeStation::Pose exchange_initial_pose;
+    exchange_initial_pose.x_m = exchange_initial_values[0] * 0.001;
+    exchange_initial_pose.y_m = exchange_initial_values[1] * 0.001;
+    exchange_initial_pose.z_m = exchange_initial_values[2] * 0.001;
+    exchange_initial_pose.theta_rad = exchange_initial_values[3] * kDegToRad;
+    exchange_initial_pose.phi_rad = exchange_initial_values[4] * kDegToRad;
+    exchange_initial_pose.alpha_rad = exchange_initial_values[5] * kDegToRad;
+    if (exchange_initial_pose.x_m < -0.2 || exchange_initial_pose.x_m > 0.0 ||
+        exchange_initial_pose.y_m < 0.1 || exchange_initial_pose.y_m > 0.3 ||
+        exchange_initial_pose.z_m < 0.5 || exchange_initial_pose.z_m > 0.8 ||
+        exchange_initial_pose.theta_rad < -kPi / 2.0 || exchange_initial_pose.theta_rad > kPi / 2.0 ||
+        exchange_initial_pose.phi_rad < 0.0 || exchange_initial_pose.phi_rad > kPi / 2.0 ||
+        exchange_initial_pose.alpha_rad < -kPi / 4.0 || exchange_initial_pose.alpha_rad > kPi / 4.0)
+    {
+        std::fprintf(stderr, "兑换站初始位姿超出规则/模型范围\n");
+        return 2;
+    }
+    if (!arm_position_override)
+    {
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            arm_position[axis] = exchange_position[axis] + arm_base_pose_mm[axis] * 0.001;
         }
     }
     if (host_mode)
@@ -439,18 +503,16 @@ int main(int argc, char **argv)
         world_config.joint_frictionloss = kJointFrictionLoss;
 
         MujocoWorld world(world_config);
-        Arm arm(world, MakeArmConfig(world));
+        const Arm::Config arm_config = MakeArmConfig(world);
+        Arm arm(world, arm_config);
+        std::printf("[system] arm base: OXYZ=(%.1f %.1f %.1f) mm -> world=(%.3f %.3f %.3f) m\n",
+                    arm_base_pose_mm[0], arm_base_pose_mm[1], arm_base_pose_mm[2],
+                    arm_position[0], arm_position[1], arm_position[2]);
         std::unique_ptr<ExchangeStation> exchange;
         if (station_enabled)
         {
-            exchange = std::make_unique<ExchangeStation>(world, kExchangeModelPrefix);
-            if (exchange_free)
-            {
-                ExchangeStation::Command free_cmd;
-                free_cmd.action = ExchangeStation::Action::Free;
-                exchange->HandleCommand(free_cmd);
-                std::printf("[system] exchange: 关节已释放，可在窗口里拖动\n");
-            }
+            exchange = std::make_unique<ExchangeStation>(world, kExchangeModelPrefix,
+                                                         exchange_initial_pose);
             const auto pose = exchange->GetSnapshot().pose;
             std::printf("[system] exchange: %s @ O=[%.3f %.3f %.3f], "
                         "core pose=[%.0f %.0f %.0f] mm\n",
@@ -465,8 +527,7 @@ int main(int argc, char **argv)
         {
             link = std::make_unique<HostLink>(kHostLinkPath);
             host = std::make_unique<Host>(arm, *link, kHostStateDivider, exchange.get());
-            /* 进入 HOST 时主臂没有任何关节闭环，只有重力前馈托着，等上位机发 SET_HOST_TARGET；
-             * 腰部和夹爪由 Arm 自己保持 */
+            /* 进入 HOST 后等上位机发目标；腰部和夹爪由 Arm 自己保持。 */
             arm.SetState(Arm::State::Host);
             std::printf("[system] host link: %s -> %s  (921600 8N1，Host/armhost 直接连这个口)\n",
                         link->link_path().c_str(), link->device_path().c_str());

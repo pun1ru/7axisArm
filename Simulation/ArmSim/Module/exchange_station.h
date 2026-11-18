@@ -33,7 +33,6 @@ public:
         Confirm = 8,
         AutoDemo = 9,
         StopAuto = 10,
-        Free = 11,   /* 撤掉所有驱动，关节可手动拖动；Reset 重新接管并回到停放位 */
     };
 
     enum class Phase : uint8_t {
@@ -75,7 +74,6 @@ public:
         int difficulty = 1;
         bool moving = false;
         bool auto_demo = false;
-        bool free = false;
         double q_target_deg = 0.0;
         uint64_t seed = 0;
         Pose pose;
@@ -87,6 +85,8 @@ public:
     };
 
     ExchangeStation(MujocoWorld &world, const std::string &prefix = "exchange/");
+    ExchangeStation(MujocoWorld &world, const std::string &prefix,
+                    const Pose &initial_pose);
     ExchangeStation(const ExchangeStation &) = delete;
     ExchangeStation &operator=(const ExchangeStation &) = delete;
 
@@ -126,7 +126,6 @@ private:
     bool BeginConfirm();
     Phase ConfirmPhase() const;
     void BeginReset();
-    void SetFree(bool free);
     void AutoAdvance();
     std::array<double, kJointCount> CurrentQ() const;
     const std::array<double, kJointCount> &TargetQ() const { return target_q_; }
@@ -142,10 +141,10 @@ private:
     double elapsed_s_ = 0.0;
     double q_target_deg_ = 0.0;
     uint64_t seed_ = 0;
+    Pose initial_pose_;
     Pose pose_target_;
     bool auto_demo_ = false;
     bool pending_auto_start_ = false;
-    bool free_ = false;
     std::string prefix_;
     double auto_next_s_ = 0.0;
     double complete_s_ = 0.0;

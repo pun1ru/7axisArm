@@ -4,8 +4,10 @@
 #        ./run.sh --fast          不限速
 #        ./run.sh --host          开伪串口等 Host/armhost
 #        ./run.sh --no-arena      只加载 BigArm
-#        ./run.sh --arm-position 5 -5 0.01
 #        ./run.sh --exchange-position 4.05 -5 0
+#        ./run.sh --exchange-pose -200 200 800 0 90 0
+#        ./run.sh --arm-base-pose 200 0 300
+#        ./run.sh --arm-position 4.25 -5 0.3
 #        ./run.sh --no-exchange   不加载兑换站
 #        ./run.sh --full-viewer   查看器加载完整碰撞模型（启动较慢）
 #        ./run.sh ../mujoco/BigArm/robot.xml 10     指定模型和秒数

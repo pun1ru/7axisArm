@@ -37,6 +37,7 @@ add_executable(armsim
     Algorithm/kinematics.cpp
     Algorithm/ik.cpp
     Algorithm/ik_cost.cpp
+    Algorithm/ik_numeric.cpp
     Algorithm/gravity.cpp
     Driver/mujoco_world.cpp
     Driver/host_link.cpp
@@ -133,4 +134,16 @@ if(WIN32)
   else()
     message(WARNING "找不到 mujoco.dll（${MUJOCO_ROOT}/bin），运行时需要把它放到 PATH 里")
   endif()
+endif()
+
+# 数值逆解的单元测试，不依赖 MuJoCo，默认不编译：cmake --build build --target ik_numeric_test
+add_executable(ik_numeric_test EXCLUDE_FROM_ALL
+    tests/ik_numeric_test.cpp
+    Algorithm/ik_numeric.cpp
+    Algorithm/ik_cost.cpp
+    Algorithm/kinematics.cpp
+)
+target_include_directories(ik_numeric_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Algorithm")
+if(NOT MSVC)
+  target_compile_options(ik_numeric_test PRIVATE -Wall -Wextra)
 endif()

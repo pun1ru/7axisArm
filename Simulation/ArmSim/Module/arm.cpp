@@ -345,6 +345,11 @@ void Arm::UpdateTarget()
         AlignTarget();
     }
 
+    if (status_.state == State::HostIk && target_.ik.active && target_.ik.method == IkMethod::Numeric)
+    {
+        StepNumericIk();
+    }
+
     for (int i = 0; i < kJointCount; ++i)
     {
         JointTarget &target = target_.joint[i];
@@ -430,11 +435,19 @@ Arm::HostTargetResult Arm::SetHostTarget(int joint, float target_deg, bool close
 }
 
 Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, IkPsiMode psi_mode,
-                                     float psi_deg, const IkCostWeights &cost_weights)
+                                     float psi_deg, const IkCostWeights &cost_weights, IkMethod method)
 {
     if (status_.state != State::Host && status_.state != State::HostIk)
     {
         return IkTargetResult::WrongState;
+    }
+    if (method == IkMethod::Numeric)
+    {
+        return SetNumericIkTarget(target, cost_weights);
+    }
+    if (method != IkMethod::Analytic)
+    {
+        return IkTargetResult::BadParam;
     }
     if (!srs_valid_ || branch.valid == false)
     {
@@ -461,6 +474,14 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
 
     if (status_.state == State::Host)
     {
+        if (!observer_.posture.branch.valid || branch.index() != observer_.posture.branch.index())
+        {
+            return IkTargetResult::BadBranch;
+        }
+    }
+    else if (target_.ik.active && target_.ik.method == IkMethod::Numeric)
+    {
+        /* 数值解切回解析解：解析解一步跳到目标，分支必须和当前实际构型一致 */
         if (!observer_.posture.branch.valid || branch.index() != observer_.posture.branch.index())
         {
             return IkTargetResult::BadBranch;
@@ -531,6 +552,11 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     target_.host.align_pending = false;
     target_.align_pending = false;
     target_.ik.active = true;
+    target_.ik.method = IkMethod::Analytic;
+    target_.ik.limit_mask = 0;
+    target_.ik.step_limited = false;
+    target_.ik.converged = false;
+    target_.ik.stall_cycles = 0;
     target_.ik.pose = target;
     target_.ik.psi_deg = psi_deg;
     target_.ik.psi_mode = psi_mode;
@@ -541,6 +567,128 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     target_.ik.shoulder_singular = solved.shoulder_singular;
     target_.ik.wrist_singular = solved.wrist_singular;
     return IkTargetResult::Ok;
+}
+
+/* 数值解的目标：不一次解出关节角，只记下位姿，之后每个周期由 StepNumericIk 推进一步。
+ * 从 HOST 进入时关节目标对齐当前角，参考构型取当前角；已在数值解里更新目标时参考构型保持不变；
+ * 从解析解切入时参考构型取当前关节目标。 */
+Arm::IkTargetResult Arm::SetNumericIkTarget(const Mat4 &target, const IkCostWeights &cost_weights)
+{
+    if (!IsValidIkCostWeights(cost_weights) || !IsValidNumericIkParam(config_.ik_numeric))
+    {
+        return IkTargetResult::BadParam;
+    }
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            if (!std::isfinite(target(r, c)))
+            {
+                return IkTargetResult::BadParam;
+            }
+        }
+    }
+
+    if (target_.align_pending || target_.host.align_pending)
+    {
+        AlignHost();
+    }
+    if (status_.state == State::Host)
+    {
+        if (!SetState(State::HostIk))
+        {
+            return IkTargetResult::WrongState;
+        }
+        AlignHost();
+    }
+
+    const bool keep_reference = target_.ik.active && target_.ik.method == IkMethod::Numeric;
+
+    if (!keep_reference)
+    {
+        for (int i = 0; i < kJointCount; ++i)
+        {
+            target_.ik.reference_deg[static_cast<size_t>(i)] = target_.joint[i].deg;
+        }
+        target_.ik.stall_cycles = 0;
+    }
+    target_.host.valid_mask = 0xFF;
+    target_.host.closed_loop_mask = 0xFF;
+    target_.host.align_pending = false;
+    target_.align_pending = false;
+    target_.ik.active = true;
+    target_.ik.method = IkMethod::Numeric;
+    target_.ik.pose = target;
+    target_.ik.psi_mode = IkPsiMode::Manual;
+    target_.ik.cost_weights = cost_weights;
+    target_.ik.cost = 0.0f;
+    target_.ik.branch = observer_.posture.branch;
+    target_.ik.status = IkStatus::Ok;
+    target_.ik.shoulder_singular = false;
+    target_.ik.wrist_singular = false;
+    return IkTargetResult::Ok;
+}
+
+/* 以上一周期的关节目标为线性化点走一步（不是实测角：PID 的积分项会补偿重力和摩擦造成的静差，
+ * 以实测角为起点反而会让指令只领先实测一小步而推不动）。指令领先实测角超过 max_lead_deg 时
+ * 钳回，机构跟不上时指令不会一直往前堆。 */
+void Arm::StepNumericIk()
+{
+    const NumericIkParam &param = config_.ik_numeric;
+    IkTarget &ik = target_.ik;
+    JointArray q{};
+    JointArray limit_min{};
+    JointArray limit_max{};
+
+    for (int i = 0; i < kJointCount; ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        q[idx] = target_.joint[i].deg;
+        limit_min[idx] = target_.joint[i].limit_min_deg;
+        limit_max[idx] = target_.joint[i].limit_max_deg;
+    }
+
+    const NumericIkStep step = SolveNumericIkStep(config_.dh, q, ik.pose, ik.reference_deg,
+                                                  ik.cost_weights, limit_min, limit_max, param);
+    if (!step.ok)
+    {
+        return;   // 保持上一周期的目标
+    }
+
+    float peak_deg = 0.0f;
+    for (int i = 0; i < kJointCount; ++i)
+    {
+        const size_t idx = static_cast<size_t>(i);
+        const float lead = static_cast<float>(param.max_lead_deg);
+        const float observed = observer_.joint.deg[idx];
+        float next = Clamp(q[idx] + step.dq_deg[idx], observed - lead, observed + lead);
+
+        next = Clamp(next, limit_min[idx], limit_max[idx]);
+        peak_deg = std::fmax(peak_deg, std::fabs(next - q[idx]));
+        target_.joint[i].deg = next;
+    }
+
+    ik.pos_err_m = static_cast<float>(step.pos_err_m);
+    ik.rot_err_deg = static_cast<float>(step.rot_err_rad * kRadToDeg);
+    ik.limit_mask = step.limit_mask;
+    ik.step_limited = step.step_limited;
+    ik.converged = step.converged;
+
+    /* 没到位却几乎不动：目标够不到，或被限位 / 奇异挡住 */
+    constexpr float kStallStepDeg = 1e-3f;
+    constexpr uint16_t kStallCycles = 250;   // 2 ms 周期下 0.5 s
+    if (!step.converged && peak_deg < kStallStepDeg)
+    {
+        if (ik.stall_cycles < kStallCycles)
+        {
+            ++ik.stall_cycles;
+        }
+    }
+    else
+    {
+        ik.stall_cycles = 0;
+    }
+    ik.status = ik.stall_cycles >= kStallCycles ? IkStatus::OutOfReach : IkStatus::Ok;
 }
 
 void Arm::StopHostControl()

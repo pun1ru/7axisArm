@@ -119,10 +119,6 @@ class ExchangePanel(QWidget):
         self.auto_btn.setCheckable(True)
         self.auto_btn.setToolTip("自动完成当前难度的全部步骤")
         self.reset_btn = QPushButton("复位")
-        self.free_btn = QPushButton("释放关节（可在窗口里拖动）")
-        self.free_btn.setCheckable(True)
-        self.free_btn.setToolTip("撤掉兑换站所有驱动，可在 MuJoCo 窗口里 Ctrl+右键拖动各关节。\n"
-                                 "再次点击或点“复位”重新接管并回到停放位。")
 
         start = QGroupBox("难度")
         sg = QGridLayout(start)
@@ -130,7 +126,6 @@ class ExchangePanel(QWidget):
         sg.addWidget(self.random_btn, 1, 0)
         sg.addWidget(self.auto_btn, 1, 1)
         sg.addWidget(self.reset_btn, 1, 2)
-        sg.addWidget(self.free_btn, 2, 0, 1, 3)
 
         # ---------------------------------------------------------- 装配步骤
         self.q_target = _spin(-90.0, 90.0, "°", 0.0)
@@ -210,7 +205,6 @@ class ExchangePanel(QWidget):
         self.confirm_btn.clicked.connect(lambda: self._send(ExchangeAction.CONFIRM))
         self.reset_btn.clicked.connect(lambda: self._send(ExchangeAction.RESET))
         self.auto_btn.toggled.connect(self._on_auto)
-        self.free_btn.toggled.connect(self._on_free)
         self.difficulty.currentIndexChanged.connect(self._update_buttons)
         self.set_connected(False)
 
@@ -240,9 +234,6 @@ class ExchangePanel(QWidget):
         self.auto_btn.blockSignals(True)
         self.auto_btn.setChecked(False)
         self.auto_btn.blockSignals(False)
-        self.free_btn.blockSignals(True)
-        self.free_btn.setChecked(False)
-        self.free_btn.blockSignals(False)
         self.state_label.setText("未连接：请选择 ArmSim 串口数据源" if not connected
                                  else "已连接，等待兑换站状态…")
         self._update_buttons()
@@ -276,13 +267,6 @@ class ExchangePanel(QWidget):
             self.auto_btn.blockSignals(True)
             self.auto_btn.setChecked(self._auto_requested)
             self.auto_btn.blockSignals(False)
-
-    def _on_free(self, checked: bool) -> None:
-        # 开：撤驱动；关：RESET 重新接管并平滑回到停放位
-        if not self._send(ExchangeAction.FREE if checked else ExchangeAction.RESET):
-            self.free_btn.blockSignals(True)
-            self.free_btn.setChecked(not checked)
-            self.free_btn.blockSignals(False)
 
     def _load_state_pose(self) -> None:
         s = self._state
@@ -327,13 +311,7 @@ class ExchangePanel(QWidget):
                 text = PHASE_TEXT.get(ExchangePhase(state.phase), str(state.phase))
             except ValueError:
                 text = str(state.phase)
-            flags = ExchangeStateFlag(state.flags)
-            free = ExchangeStateFlag.FREE in flags
-            self.state_label.setText("关节已释放：可在窗口里拖动" if free else text)
-            if self._pending is None and self.free_btn.isChecked() != free:
-                self.free_btn.blockSignals(True)
-                self.free_btn.setChecked(free)
-                self.free_btn.blockSignals(False)
+            self.state_label.setText(text)
             self.motion_label.setText(
                 f"位置 [{state.x_mm:+.0f}, {state.y_mm:+.0f}, {state.z_mm:+.0f}] mm　"
                 f"θ/φ/α [{state.theta_deg:+.0f}, {state.phi_deg:.0f}, {state.alpha_deg:+.0f}]°\n"
@@ -370,8 +348,7 @@ class ExchangePanel(QWidget):
         level = self._level()
         ready = self._connected and self._pending is None
         busy = bool(s and ExchangeStateFlag.MOVING in ExchangeStateFlag(s.flags))
-        free = bool(s and ExchangeStateFlag.FREE in ExchangeStateFlag(s.flags))
-        idle = ready and not busy and phase in IDLE and not free
+        idle = ready and not busy and phase in IDLE
 
         self.steps_label.setText(steps_html(level, phase) if s is not None else "")
         # 该难度不需要的步骤直接隐藏，避免一堆灰按钮
@@ -386,7 +363,7 @@ class ExchangePanel(QWidget):
                 w.setEnabled(self._connected and s is not None)
             else:
                 w.setEnabled(idle)
-        step_ok = ready and not busy and not free
+        step_ok = ready and not busy
         self.insert_btn.setEnabled(step_ok and phase == ExchangePhase.READY)
         self.lift_btn.setEnabled(step_ok and phase == ExchangePhase.INSERTED)
         self.p_btn.setEnabled(step_ok and phase == ExchangePhase.LIFTED)
@@ -395,5 +372,4 @@ class ExchangePanel(QWidget):
                                                        ExchangePhase.Q_READY))
         self.confirm_btn.setEnabled(step_ok and phase == CONFIRM_AT[level])
         self.reset_btn.setEnabled(ready)
-        self.auto_btn.setEnabled(ready and not free)
-        self.free_btn.setEnabled(ready)
+        self.auto_btn.setEnabled(ready)

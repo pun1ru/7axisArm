@@ -49,6 +49,8 @@ constexpr uint8_t kIkActionSet = 0;        // 进入/更新 HOST_IK 目标
 constexpr uint8_t kIkActionStop = 1;       // 退出 HOST_IK，回到 HOST
 constexpr uint8_t kIkPsiManual = 0;        // 使用 payload 中的 psi_deg
 constexpr uint8_t kIkPsiAuto = 1;          // 按权重自动选择 ψ
+constexpr uint8_t kIkMethodAnalytic = 0;   // 解析解：一次算出目标关节角
+constexpr uint8_t kIkMethodNumeric = 1;    // 数值解：每周期迭代一小步
 
 constexpr size_t kIkTargetSizeLegacy = 32;
 constexpr size_t kIkTargetSize = 64;
@@ -69,6 +71,7 @@ constexpr uint8_t kPostureShoulderSingular = 0x02;
 constexpr uint8_t kPostureWristSingular = 0x04;
 constexpr uint8_t kPostureIkActive = 0x08;
 constexpr uint8_t kPostureAutoPsi = 0x40;
+constexpr uint8_t kPostureNumericIk = 0x80;
 
 // PARAM_READ 的参数号；类型：U16=2 I8=1 F32=6
 constexpr uint16_t kParamStateRateHz = 0x0001;
@@ -364,6 +367,10 @@ void Host::SendPosture()
         {
             flags |= kPostureAutoPsi;
         }
+        if (ik.method == IkMethod::Numeric)
+        {
+            flags |= kPostureNumericIk;
+        }
     }
     payload[1] = flags;
     PutFloat(payload + 4, obs.posture.arm_angle.psi_deg);
@@ -413,10 +420,6 @@ void Host::SendExchangeState(double sim_time_s)
     if (s.phase == ExchangeStation::Phase::QReady || s.phase == ExchangeStation::Phase::Complete)
     {
         flags |= 0x20;
-    }
-    if (s.free)
-    {
-        flags |= 0x40;      // 关节已释放，可手动拖动
     }
     payload[3] = flags;
 
@@ -570,9 +573,10 @@ void Host::ProcessSetTarget(const Request &req, uint32_t now_ms)
     Ack(req, result);
 }
 
-/* payload: action(1) branch(1) psi_mode(1) reserved(1) xyz(12) rpy_deg(12) psi_deg(4)
+/* payload: action(1) branch(1) psi_mode(1) ik_method(1) xyz(12) rpy_deg(12) psi_deg(4)
  *          cost_weight[7](28) reserved2(4)，共 64 B；兼容仅含前 32 B 的 Manual 旧帧。
- * action=SET 时从 HOST 进入或更新 HOST_IK；action=STOP 时退出全部上位机闭环并回到 HOST。 */
+ * action=SET 时从 HOST 进入或更新 HOST_IK；action=STOP 时退出全部上位机闭环并回到 HOST。
+ * ik_method=1（数值解）时 branch、psi_mode、psi_deg 不起作用，cost_weight 是关节权重；旧帧该字节为 0 = 解析解。 */
 void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
 {
     uint8_t result = kAckOk;
@@ -601,6 +605,7 @@ void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
         const float yaw = GetFloat(req.payload + 24);
         const float psi_deg = GetFloat(req.payload + 28);
         const uint8_t psi_mode_raw = extended ? req.payload[2] : kIkPsiManual;
+        const uint8_t method_raw = extended ? req.payload[3] : kIkMethodAnalytic;
         IkCostWeights cost_weights;
         bool weights_valid = true;
 
@@ -612,11 +617,13 @@ void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
             }
             weights_valid = IsValidIkCostWeights(cost_weights);
         }
+        const bool numeric = method_raw == kIkMethodNumeric;
 
         if (branch_index >= 8U || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
             !std::isfinite(roll) || !std::isfinite(pitch) || !std::isfinite(yaw) ||
             !std::isfinite(psi_deg) || (psi_mode_raw != kIkPsiManual && psi_mode_raw != kIkPsiAuto) ||
-            (psi_mode_raw == kIkPsiAuto && !weights_valid))
+            (method_raw != kIkMethodAnalytic && method_raw != kIkMethodNumeric) ||
+            ((psi_mode_raw == kIkPsiAuto || numeric) && !weights_valid))
         {
             result = kAckBadParam;
         }
@@ -631,7 +638,9 @@ void Host::ProcessSetIkTarget(const Request &req, uint32_t now_ms)
                                                     {roll * kDegToRad, pitch * kDegToRad, yaw * kDegToRad});
             const IkPsiMode psi_mode = psi_mode_raw == kIkPsiAuto ? IkPsiMode::Auto : IkPsiMode::Manual;
 
-            if (arm_.SetIkTarget(target, branch, psi_mode, psi_deg, cost_weights) != Arm::IkTargetResult::Ok)
+            const IkMethod method = numeric ? IkMethod::Numeric : IkMethod::Analytic;
+
+            if (arm_.SetIkTarget(target, branch, psi_mode, psi_deg, cost_weights, method) != Arm::IkTargetResult::Ok)
             {
                 result = kAckBadParam;
             }

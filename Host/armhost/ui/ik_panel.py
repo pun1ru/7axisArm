@@ -6,13 +6,13 @@ import time
 from concurrent.futures import Future
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (QCheckBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout, QGroupBox,
                                QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget)
 
 from ..kinematics import (IkStatus, feasible_psi_intervals, make_srs_param, solve_ik,
                           transform_from_xyz_rpy)
 from ..model import branch_text
-from ..protocol.enums import ArmState, PostureFlag
+from ..protocol.enums import ArmState, IkMethod, PostureFlag
 
 _PSI_RANGE = "ψ 可达区间（关节限位 + 非奇异）"
 
@@ -180,6 +180,15 @@ class IkPanel(QWidget):
         self.psi_range_label.setObjectName("value")
         self.psi_range_label.setWordWrap(True)
         grid.addWidget(self.psi_range_label, 0, 0, 1, 2)
+        self.method_box = QComboBox()
+        self.method_box.addItem("解析解（S-R-S，ψ 可调）", int(IkMethod.ANALYTIC))
+        self.method_box.addItem("数值解（加权 DLS + 零空间）", int(IkMethod.NUMERIC))
+        self.method_box.setToolTip(
+            "解析解：一次解出 7 个关节目标，臂角 ψ 手动给定或自动选择。\n"
+            "数值解：固件每个控制周期在当前构型线性化走一小步，用加权阻尼最小二乘逼近目标，"
+            "冗余度由零空间项拉向进入 IK 时的构型；每步受关节限位和单周期最大转角约束。\n"
+            "数值解不受分支约束，ψ 滑条不起作用，关节权重表示该关节动多少的代价。")
+        self.method_box.currentIndexChanged.connect(self._on_method_changed)
         rows = (
             ("x", "X", -2.0, 2.0, 1000, 0.005, 3, " m"),
             ("y", "Y", -2.0, 2.0, 1000, 0.005, 3, " m"),
@@ -205,8 +214,10 @@ class IkPanel(QWidget):
             "按 J0~J6 加权代价选择")
         self.auto_psi.toggled.connect(self._on_auto_psi_changed)
         grid.addWidget(self.auto_psi, len(rows) + 1, 0, 1, 2)
+        grid.addWidget(QLabel("求解方式"), len(rows) + 2, 0)
+        grid.addWidget(self.method_box, len(rows) + 2, 1)
 
-        weights_box = QGroupBox("自动 ψ 代价权重（deg²）")
+        self.weights_box = weights_box = QGroupBox("自动 ψ 代价权重（deg²）")
         weights_grid = QGridLayout(weights_box)
         self.weight_spins: list[QDoubleSpinBox] = []
         for i in range(7):
@@ -317,28 +328,44 @@ class IkPanel(QWidget):
         if auto and not self._is_host_ik():
             self._auto_dirty = False
             return
+        method = self._method()
+        numeric = method == IkMethod.NUMERIC
         branch = self._branch
-        if branch is None:
+        if branch is None and not numeric:   # 数值解从当前构型出发，不依赖分支
             if not auto:
                 self._set_feedback("没有有效分支，无法发送 IK 目标")
             return
         values = {k: widget.value() for k, widget in self.fields.items()}
         weights = tuple(spin.value() for spin in self.weight_spins)
-        auto_psi = self.auto_psi.isChecked()
-        if auto_psi and sum(weights) <= 0.0:
-            self._set_feedback("自动 ψ 至少需要一个非零代价权重")
+        auto_psi = self.auto_psi.isChecked() and not numeric
+        if (auto_psi or numeric) and sum(weights) <= 0.0:
+            self._set_feedback("至少需要一个非零权重")
             return
-        future = self.ctrl.set_ik_target(int(branch), values["x"], values["y"], values["z"],
+        future = self.ctrl.set_ik_target(int(branch or 0), values["x"], values["y"], values["z"],
                                          values["roll"], values["pitch"], values["yaw"], values["psi"],
-                                         auto_psi, weights)
+                                         auto_psi, weights, int(method))
         self._set_future(future, "" if auto else "正在发送 IK 目标…", quiet=auto)
+
+    def _method(self) -> IkMethod:
+        return IkMethod(int(self.method_box.currentData()))
+
+    def _is_numeric(self) -> bool:
+        return self._method() == IkMethod.NUMERIC
+
+    def _on_method_changed(self, _index: int) -> None:
+        self.weights_box.setTitle("关节权重 W（越大该关节动得越少）" if self._is_numeric()
+                                  else "自动 ψ 代价权重（deg²）")
+        self._schedule_range()
+        self._update_enabled()
+        if self._is_host_ik():
+            self._queue_auto_send()
 
     def _on_auto_psi_changed(self, _checked: bool) -> None:
         self._schedule_range()
         self._queue_auto_send()
 
     def _on_cost_weights_changed(self, _value: float) -> None:
-        if self.auto_psi.isChecked():
+        if self.auto_psi.isChecked() or self._is_numeric():
             self._queue_auto_send()
 
     def _queue_auto_send(self) -> None:
@@ -501,6 +528,7 @@ class IkPanel(QWidget):
             if PostureFlag.WRIST_SINGULAR in flags:
                 singular.append("腕奇异")
             status = ("IK 闭环" if PostureFlag.IK_ACTIVE in flags else "关节目标") + \
+                     ("，数值解" if PostureFlag.NUMERIC_IK in flags else "") + \
                      ("，自动 ψ" if PostureFlag.AUTO_PSI in flags else "") + \
                      (f"，{'/'.join(singular)}" if singular else "")
             self.ik_status.setText(status)
@@ -512,8 +540,11 @@ class IkPanel(QWidget):
         elif sample is None:
             self.state_label.setText("已连接，等待 ARM_POSTURE")
         elif state == ArmState.HOST_IK:
-            mode = "自动 ψ" if self.auto_psi.isChecked() else "手动 ψ"
-            self.state_label.setText(f"HOST_IK：{mode}，拖动位姿滑条会自动发送，逆解结果保持当前分支")
+            if self._is_numeric():
+                self.state_label.setText("HOST_IK：数值解，拖动位姿滑条会自动发送，固件逐周期逼近目标")
+            else:
+                mode = "自动 ψ" if self.auto_psi.isChecked() else "手动 ψ"
+                self.state_label.setText(f"HOST_IK：{mode}，拖动位姿滑条会自动发送，逆解结果保持当前分支")
         elif state == ArmState.HOST:
             self.state_label.setText("HOST：可载入当前位姿后进入 IK 闭环")
         else:
@@ -539,6 +570,9 @@ class IkPanel(QWidget):
 
     def _update_psi_range(self) -> None:
         if not self._supported:
+            return
+        if self._is_numeric():
+            self.psi_range_label.setText("数值解：不使用 ψ，冗余度由零空间项拉向进入 IK 时的构型")
             return
         if self._dh is None or self._limits is None:
             if self._param_error:
@@ -627,10 +661,12 @@ class IkPanel(QWidget):
         self.load_btn.setEnabled(self._supported and posture_ok and not busy)
         self.toggle_btn.setEnabled(self._supported and host and not busy)
         self.apply_btn.setEnabled(self._supported and state == ArmState.HOST_IK and posture_ok and not busy)
-        self.auto_psi.setEnabled(self._supported and host)
+        numeric = self._is_numeric()
+        self.auto_psi.setEnabled(self._supported and host and not numeric)
         auto_psi = self.auto_psi.isChecked()
         for key, widget in self.fields.items():
             widget.setEnabled(self._supported and state == ArmState.HOST_IK
-                              and not (key == "psi" and auto_psi))
+                              and not (key == "psi" and (auto_psi or numeric)))
         for spin in self.weight_spins:
-            spin.setEnabled(self._supported and host and auto_psi)
+            spin.setEnabled(self._supported and host and (auto_psi or numeric))
+        self.method_box.setEnabled(self._supported and host)

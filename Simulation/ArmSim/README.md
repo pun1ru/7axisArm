@@ -62,7 +62,8 @@ ARMSIM_FORCE_X11=0 ./run.sh
 机械臂 MJCF 自带的无限大 `floor` plane 会在合并前移除，避免与普通地面重复。
 普通地面不包含高精度场地网格，启动和物理步进都比 2027 mjarena 轻得多。默认模型
 没有单独的轻量显示副本，物理模型和 Viewer 使用同一套几何。机械臂默认附加在世界系
-`(5, -5, 0.01) m`，兑换站 O 点位于 `(4.05, -5, 0) m`。
+兑换站 O 点位于 `(4.05, -5, 0) m`；机械臂基座默认位于 OXYZ `(200,0,300) mm`，
+即世界系 `(4.25,-5,0.3) m`，基座坐标轴与 OXYZ 同向。
 机械臂名称统一带 `arm/` 前缀，例如 `arm/joint1`、`arm/link8`、`arm/dh8`，避免与场地对象重名。
 ArmSim 的关节配置会自动加前缀，控制器和 Host 协议仍使用原来的 `joint1..joint8` 逻辑名称。
 
@@ -72,8 +73,10 @@ ArmSim 的关节配置会自动加前缀，控制器和 Host 协议仍使用原�
 | --- | --- |
 | `--arena <xml>` | 合并指定场地；场地拥有 timestep、重力和求解器等全局选项 |
 | `--no-arena` | 不合并场地，恢复纯机械臂模型 |
-| `--arm-position X Y Z` | 机械臂附件在世界系的位置，单位 m |
+| `--arm-base-pose X Y Z` | 机械臂基座相对 OXYZ 的位置，单位 mm，默认 `200 0 300` |
+| `--arm-position X Y Z` | 高级覆盖：直接指定机械臂基座世界位置，单位 m |
 | `--exchange-position X Y Z` | 兑换站 O 点的世界位置，默认 `4.05 -5 0 m` |
+| `--exchange-pose X Y Z THETA PHI ALPHA` | 科技核心 E 相对 O 的初始位姿，默认规则 `-200 200 800 0 90 0` |
 | `--no-exchange` | 不加载兑换站，Host 的兑换站页显示不可用 |
 | `--full-viewer` | 自定义场地时让 Viewer 显式加载物理模型；普通地面下无额外作用 |
 
@@ -82,11 +85,10 @@ ArmSim 的关节配置会自动加前缀，控制器和 Host 协议仍使用原�
 `../mujoco/scene/exchange_station.xml` 和机械臂一样以附件方式合并到普通地面；
 物理和 Viewer 使用同一套机构，因此关节位置一致。模型坐标按规则 5.4.3 建立：
 
-- O 为底座正面与台面交线中点，X 指向底座内部，Z 向上；CAD 底面比 O 低 78 mm。
-  默认 `O.z=0`（普通地面）。换成带高地的场地时用 `--exchange-position` 指定。
-- `--exchange-position` 直接设置 O 点；支撑台作为兑换站附件一起移动，因此手动改高度时
-  需要让支撑台底面与当前地面一致。
-- 初始科技核心位姿为 `(x,y,z,θ,φ,α)=(-200,200,800 mm,0°,90°,0°)`。
+- O 为底座正面与台面/地面交线中点，X 指向底座内部，Z 向上。普通地面下默认
+  `O=(4.05,-5,0) m`，换成带高地的场地时用 `--exchange-position` 指定 O 点。
+- 初始科技核心位姿默认按规则为 `(x,y,z,θ,φ,α)=(-200,200,800 mm,0°,90°,0°)`，
+  也可用 `--exchange-pose` 修改。
 - 一级使用固定朝向；二至四级按表 5-10 随机 `x=[-100,0] mm、y=[100,300] mm、`
   `z=[500,700] mm、θ=[-90,90]°、φ=[0,90]°、α=[-45,45]°`。
 - 装配顺序为插入 100 mm、沿 Z 上移 100 mm、P 轴抬升 90°、Q 轴到目标角、确认。
@@ -162,12 +164,19 @@ link.set_host_target(0, 20.0, closed_loop=True).result(1.0)   # joint2 转到多
 posture = link.mirror.snapshot().posture
 link.set_ik_target(posture.branch, posture.x, posture.y, posture.z,
                    posture.roll, posture.pitch, posture.yaw, posture.psi_deg).result(1.0)
+# 数值解：固件每周期迭代一小步（加权 DLS + 零空间 + 限位/步长约束），不要求分支，ψ 不起作用
+from armhost.protocol.enums import IkMethod
+link.set_ik_target(0, posture.x, posture.y, posture.z + 0.05,
+                   posture.roll, posture.pitch, posture.yaw, 0.0,
+                   False, (1.0,) * 7, IkMethod.NUMERIC).result(1.0)
 link.stop_ik().result(1.0)                                    # 回到 HOST
 ```
 
 `--host` 下主臂直接进入 HOST，不跑脚本、不刷终端，所有关节一开始都不闭环，只有重力前馈托着，
 等上位机发 `SET_HOST_TARGET`。`SET_IK_TARGET` 会先校验请求分支与当前分支一致，再调用 S-R-S
 解析逆解、检查关节限位并把 7 个关节全部切到闭环；`ARM_POSTURE` 周期上报当前分支、ψ 和末端位姿。
+数值解在 `Algorithm/ik_numeric.cpp`，参数在 `NumericIkParam`（默认值见 `ik_numeric.h`，`Arm::Config::ik_numeric`）。
+算法测试：`cmake --build build --target ik_numeric_test && ./build/ik_numeric_test`。
 仿真强制按实时节拍跑。协议只覆盖主臂 7 个关节：`JOINT_STATE` 100 Hz 上报，
 `PARAM_READ` 可读限位、PID 增益、DH、方向、零点，未实现的消息回 `UNSUPPORTED`。
 上位机掉线超过 300 ms，主臂退出闭环，腰部和夹爪继续保持。

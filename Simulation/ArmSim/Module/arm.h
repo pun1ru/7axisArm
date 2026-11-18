@@ -8,6 +8,7 @@
 #include "gravity.h"
 #include "ik.h"
 #include "ik_cost.h"
+#include "ik_numeric.h"
 #include "joint_actuator.h"
 #include "kinematics.h"
 #include "mujoco_world.h"
@@ -85,6 +86,7 @@ public:
         std::array<JointGain, kJointCount> gain{};
 
         GripperConfig gripper;
+        NumericIkParam ik_numeric;                 // HOST_IK 数值解参数
         GravityModel::Param gravity;               // link[0] 是腰部连杆，link[1..7] 是主臂连杆
     };
 
@@ -147,6 +149,15 @@ public:
         float cost = 0.0f;
         Branch branch;
         IkStatus status = IkStatus::Ok;
+        IkMethod method = IkMethod::Analytic;
+        /* 数值解：参考构型在进入（或从解析解切入）时锁存，零空间项把关节拉向它 */
+        JointArray reference_deg{};
+        float pos_err_m = 0.0f;         // 最近一周期步前的末端误差
+        float rot_err_deg = 0.0f;
+        uint8_t limit_mask = 0;         // 最近一周期被限位钳住的关节，bit i = 第 i 个
+        bool step_limited = false;
+        bool converged = false;
+        uint16_t stall_cycles = 0;      // 连续"没到位但几乎不动"的周期数，超过阈值时 status = OutOfReach
         bool shoulder_singular = false;
         bool wrist_singular = false;
     };
@@ -196,11 +207,15 @@ public:
      * multi_turn=false 时按旧协议解释为单圈绝对角，并映射到当前圈。 */
     HostTargetResult SetHostTarget(int joint, float target_deg, bool closed_loop,
                                    bool multi_turn = true);
-    /* HOST_IK 目标：从 HOST 进入时校验请求分支与当前分支一致；成功后全部关节投入闭环。
+    /* HOST_IK 目标：method = Numeric 时 branch / psi_mode / psi_deg 被忽略，目标位姿每周期被
+     * UpdateTarget 逼近一小步（加权阻尼最小二乘 + 零空间 + 限位 + 步长限幅，见 ik_numeric.h），
+     * cost_weights 当作关节权重 W，权重大的关节动得少，进入时从当前构型出发，不要求分支一致。
+     * 以下为 Analytic：从 HOST 进入时校验请求分支与当前分支一致；成功后全部关节投入闭环。
      * target 是 ForwardKinematics 同一坐标系的末端位姿。Manual 使用 psi_deg，
      * Auto 忽略 psi_deg，按当前分支和 cost_weights 自动选择臂角。 */
     IkTargetResult SetIkTarget(const Mat4 &target, const Branch &branch, IkPsiMode psi_mode,
-                               float psi_deg, const IkCostWeights &cost_weights);
+                               float psi_deg, const IkCostWeights &cost_weights,
+                               IkMethod method = IkMethod::Analytic);
     /* 主臂全部关节退出闭环，目标保留，只剩重力前馈；腰部和夹爪继续保持 */
     void StopHostControl();
     /* 夹爪目标开合量 m，限制在 [open_m, closed_m] */
@@ -238,6 +253,8 @@ private:
     void AlignTarget();
     void AlignHost();
     void UpdateTarget();
+    IkTargetResult SetNumericIkTarget(const Mat4 &target, const IkCostWeights &cost_weights);
+    void StepNumericIk();
     // 控制
     void ControlJoints();
     void ControlWaistAndGripper(bool active);

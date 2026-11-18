@@ -184,13 +184,13 @@ class MonitorController:
 
     def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
                       pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
-                      cost_weights: tuple[float, ...] | None = None):
+                      cost_weights: tuple[float, ...] | None = None, method: int = 0):
         b = self.backend
         if b is None or not hasattr(b, "set_ik_target"):
             self._push("warn", "当前数据源不支持 IK 闭环")
             return None
         fut = b.set_ik_target(branch, x, y, z, roll, pitch, yaw, psi_deg,
-                              auto_psi, cost_weights)
+                              auto_psi, cost_weights, method)
 
         def done(f):
             e = f.exception()

@@ -13,7 +13,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from .enums import (AckResult, EstopAction, ExchangeAction, HostIkAction, HostTargetAction,
+from .enums import (AckResult, EstopAction, ExchangeAction, HostIkAction, HostTargetAction, IkMethod,
                     MsgType, ParamType)
 from .msg_link import DecodeError, as_enum, need
 
@@ -131,7 +131,7 @@ class SetHostTarget:
 
 @dataclass(slots=True)
 class SetIkTarget:
-    """0 action u8 | 1 branch u8 | 2 psi_mode u8 | 3 reserved u8
+    """0 action u8 | 1 branch u8 | 2 psi_mode u8 | 3 ik_method u8
     4 x f32 | 8 y f32 | 12 z f32
     16 roll f32 | 20 pitch f32 | 24 yaw f32 | 28 psi_deg f32
     32 cost_weight[7] f32 | 60 reserved u32，共 64 B
@@ -139,6 +139,8 @@ class SetIkTarget:
     SET：从 HOST 进入或更新 HOST_IK。branch = bit0 肩 / bit1 肘 / bit2 腕，
     置位表示对应 λ = -1。STOP：退出 HOST_IK 并让全部上位机闭环退出。
     psi_mode=0 使用 psi_deg；psi_mode=1 在当前分支内按权重自动选择 ψ。
+    ik_method=0 解析解；ik_method=1 数值解：固件每周期迭代一小步，branch / psi 不起作用，
+    cost_weight 是关节权重（权重大的关节动得少）。旧固件把该字节当保留位，数值解需要新固件。
     位姿使用 ForwardKinematics 的腰部连杆坐标系，角度单位 deg。"""
     TYPE: ClassVar[int] = MsgType.SET_IK_TARGET
     LEGACY_S: ClassVar[struct.Struct] = struct.Struct("<BBH7f")
@@ -154,9 +156,11 @@ class SetIkTarget:
     psi_deg: float = 0.0
     auto_psi: bool = False
     cost_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    method: IkMethod | int = IkMethod.ANALYTIC
 
     def encode(self) -> bytes:
         action = HostIkAction(self.action)
+        method = IkMethod(self.method)
         weights = tuple(float(v) for v in self.cost_weights)
         if len(weights) != 7:
             raise ValueError("SET_IK_TARGET cost_weights must contain 7 values")
@@ -168,9 +172,9 @@ class SetIkTarget:
                 raise ValueError("SET_IK_TARGET contains non-finite value")
             if not all(math.isfinite(v) and v >= 0.0 for v in weights):
                 raise ValueError("SET_IK_TARGET cost_weights must be finite and non-negative")
-            if self.auto_psi and sum(weights) <= 0.0:
-                raise ValueError("SET_IK_TARGET auto psi needs at least one positive cost weight")
-        return self.S.pack(int(action), int(self.branch), int(bool(self.auto_psi)), 0,
+            if (self.auto_psi or method == IkMethod.NUMERIC) and sum(weights) <= 0.0:
+                raise ValueError("SET_IK_TARGET auto psi / numeric IK needs at least one positive cost weight")
+        return self.S.pack(int(action), int(self.branch), int(bool(self.auto_psi)), int(method),
                            float(self.x), float(self.y), float(self.z), float(self.roll),
                            float(self.pitch), float(self.yaw), float(self.psi_deg), *weights)
 
@@ -180,11 +184,11 @@ class SetIkTarget:
             action, branch, _reserved, x, y, z, roll, pitch, yaw, psi = cls.LEGACY_S.unpack_from(p)
             return cls(as_enum(HostIkAction, action), branch, x, y, z, roll, pitch, yaw, psi)
         need(p, cls.S.size, "SET_IK_TARGET")
-        action, branch, auto_psi, _reserved, x, y, z, roll, pitch, yaw, psi, *weights = cls.S.unpack_from(p)
+        action, branch, auto_psi, method, x, y, z, roll, pitch, yaw, psi, *weights = cls.S.unpack_from(p)
         if auto_psi not in (0, 1):
             raise DecodeError(f"SET_IK_TARGET psi_mode {auto_psi} is invalid")
         return cls(as_enum(HostIkAction, action), branch, x, y, z, roll, pitch, yaw, psi,
-                   bool(auto_psi), tuple(weights))
+                   bool(auto_psi), tuple(weights), as_enum(IkMethod, method))
 
 
 @dataclass(slots=True)

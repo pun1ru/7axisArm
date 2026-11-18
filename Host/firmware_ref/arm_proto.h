@@ -83,6 +83,9 @@ enum { ARM_IK_ACTION_SET = 0, ARM_IK_ACTION_STOP };
 /* SET_IK_TARGET psi_mode */
 enum { ARM_IK_PSI_MANUAL = 0, ARM_IK_PSI_AUTO };
 
+/* SET_IK_TARGET ik_method：数值解时 branch / psi 不起作用，cost_weight 是关节权重 */
+enum { ARM_IK_METHOD_ANALYTIC = 0, ARM_IK_METHOD_NUMERIC };
+
 enum {
     ARM_EV_BOOT = 0x01, ARM_EV_ARM_STATE_CHANGED = 0x02,
     ARM_EV_HOST_LINK_LOST = 0x10, ARM_EV_HOST_LINK_RESTORED = 0x11, ARM_EV_TORQUE_EXPIRED = 0x12,
@@ -166,7 +169,7 @@ typedef struct ARM_PACKED {
 } ArmMsgArmPosture_t;
 
 typedef struct ARM_PACKED {
-    uint8_t action, branch, psi_mode, reserved;
+    uint8_t action, branch, psi_mode, ik_method;
     float x, y, z, roll, pitch, yaw, psi_deg;
     float cost_weight[7];
     uint32_t reserved2;

@@ -43,11 +43,30 @@ uint64_t MakeSeed()
 }  // namespace
 
 ExchangeStation::ExchangeStation(MujocoWorld &world, const std::string &prefix)
-    : world_(world), prefix_(prefix)
+    : ExchangeStation(world, prefix, Pose{})
+{
+}
+
+ExchangeStation::ExchangeStation(MujocoWorld &world, const std::string &prefix,
+                                 const Pose &initial_pose)
+    : world_(world), initial_pose_(initial_pose), pose_target_(initial_pose), prefix_(prefix)
 {
     BindJoints(prefix);
-    target_q_ = CurrentQ();
+    target_q_ = {
+        initial_pose.x_m, initial_pose.y_m, initial_pose.z_m,
+        initial_pose.theta_rad, initial_pose.phi_rad, initial_pose.alpha_rad,
+        0.0, 0.0, 0.0,
+    };
+    const std::array<std::string, kJointCount> names = {
+        "level_x", "level_y", "level_z", "level_theta", "level_phi", "level_alpha",
+        "step3_slide", "p_axis", "q_axis",
+    };
+    for (int i = 0; i < kJointCount; ++i)
+    {
+        world_.SetJointPosition(prefix_ + names[i], target_q_[i]);
+    }
     UpdateActuators(target_q_);
+    world_.Forward();
 }
 
 void ExchangeStation::BindJoints(const std::string &prefix)
@@ -140,10 +159,6 @@ bool ExchangeStation::TargetReached() const
 void ExchangeStation::Step(double dt)
 {
     elapsed_s_ += std::max(0.0, dt);
-    if (free_)
-    {
-        return;   // 驱动已撤掉，关节完全交给手
-    }
     std::array<double, kJointCount> q = target_q_;
 
     for (int i = 0; i < kJointCount; ++i)
@@ -212,23 +227,12 @@ bool ExchangeStation::HandleCommand(const Command &command)
         auto_demo_ = false;
         pending_auto_start_ = false;
         return true;
-    case Action::Free:
-        SetFree(true);
-        return true;
     case Action::Reset:
         auto_demo_ = false;
         pending_auto_start_ = false;
-        if (free_)
-        {
-            SetFree(false);
-        }
         BeginReset();
         return true;
     case Action::AutoDemo:
-        if (free_)
-        {
-            return false;
-        }
         difficulty_ = std::clamp(command.difficulty, 1, 4);
         auto_demo_ = true;
         pending_auto_start_ = true;
@@ -246,7 +250,7 @@ bool ExchangeStation::HandleCommand(const Command &command)
         break;
     }
 
-    if (free_ || !MotionDone())
+    if (!MotionDone())
     {
         return false;
     }
@@ -453,46 +457,15 @@ bool ExchangeStation::BeginConfirm()
     return true;
 }
 
-void ExchangeStation::SetFree(bool free)
-{
-    if (free == free_)
-    {
-        return;
-    }
-    free_ = free;
-    for (int i = 0; i < kJointCount; ++i)
-    {
-        world_.SetActuatorEnabled(actuator_[i], !free);
-    }
-    world_.SetSubtreeFree(prefix_ + "E", free);
-    if (free)
-    {
-        auto_demo_ = false;
-        pending_auto_start_ = false;
-        for (Motion &m : motion_)
-        {
-            m.active = false;
-        }
-        phase_ = Phase::Parked;
-    }
-    else
-    {
-        /* 重新接管：目标先设成当前位置，避免驱动一接上就把关节猛拉回去，
-         * 随后 BeginReset 会平滑回到停放位。 */
-        target_q_ = CurrentQ();
-        UpdateActuators(target_q_);
-    }
-}
-
 void ExchangeStation::BeginReset()
 {
     auto target = TargetQ();
-    target[0] = Pose{}.x_m;
-    target[1] = Pose{}.y_m;
-    target[2] = Pose{}.z_m;
-    target[3] = Pose{}.theta_rad;
-    target[4] = Pose{}.phi_rad;
-    target[5] = Pose{}.alpha_rad;
+    target[0] = initial_pose_.x_m;
+    target[1] = initial_pose_.y_m;
+    target[2] = initial_pose_.z_m;
+    target[3] = initial_pose_.theta_rad;
+    target[4] = initial_pose_.phi_rad;
+    target[5] = initial_pose_.alpha_rad;
     target[kJlift] = 0.0;
     target[kJp] = 0.0;
     target[kJq] = 0.0;
@@ -545,7 +518,6 @@ ExchangeStation::Snapshot ExchangeStation::GetSnapshot() const
                  phase_ == Phase::Lifting || phase_ == Phase::RotatingP ||
                  phase_ == Phase::RotatingQ || phase_ == Phase::Resetting;
     out.auto_demo = auto_demo_;
-    out.free = free_;
     out.q_target_deg = q_target_deg_;
     out.seed = seed_;
     out.pose = {q[0], q[1], q[2], q[3], q[4], q[5]};

@@ -15,7 +15,7 @@ from armhost.protocol import (MAX_PAYLOAD, Ack, AckResult, ArmPosture, ArmState,
                               RawMessage, SetHostTarget, SetIkTarget, SetJointTorque, StatusFlag,
                               SystemStatus, TorqueItem, decode_frame, decode_payload, encode_frame)
 from armhost.protocol.crc import crc8, crc16  # noqa: E402
-from armhost.protocol.enums import HostIkAction, HostTargetAction, ParamType  # noqa: E402
+from armhost.protocol.enums import HostIkAction, HostTargetAction, IkMethod, ParamType  # noqa: E402
 
 
 def sample_joint_state(n=7):
@@ -252,6 +252,32 @@ class TestMessages(unittest.TestCase):
         with self.assertRaises(ValueError):
             SetIkTarget(HostIkAction.SET, 0, auto_psi=True,
                         cost_weights=(0.0,) * 7).encode()
+
+    def test_ik_target_numeric_method(self):
+        weights = (1.0, 2.0, 1.0, 1.0, 0.5, 1.0, 1.0)
+        command = SetIkTarget(HostIkAction.SET, 2, 0.125, 0.25, 0.375, 1.0, 2.0, 3.0, 0.0,
+                              False, weights, IkMethod.NUMERIC)
+        payload = command.encode()
+        self.assertEqual(len(payload), 64)
+        self.assertEqual(payload[3], int(IkMethod.NUMERIC))      # ik_method 在偏移 3
+        got = decode_payload(MsgType.SET_IK_TARGET, payload)
+        self.assertEqual(got, command)
+        self.assertEqual(got.method, IkMethod.NUMERIC)
+
+        # 旧帧（偏移 3 = 保留位 0）按解析解解释
+        default = SetIkTarget(HostIkAction.SET, 2).encode()
+        self.assertEqual(default[3], int(IkMethod.ANALYTIC))
+        # STOP 不带 method 校验也能编码
+        self.assertEqual(len(SetIkTarget(HostIkAction.STOP).encode()), 64)
+        with self.assertRaises(ValueError):
+            SetIkTarget(HostIkAction.SET, 0, cost_weights=(0.0,) * 7, method=IkMethod.NUMERIC).encode()
+        bad = bytearray(payload)
+        bad[3] = 9
+        unknown = decode_payload(MsgType.SET_IK_TARGET, bytes(bad))   # 未知值原样保留，由固件回 BAD_PARAM
+        self.assertEqual(unknown.method, 9)
+        with self.assertRaises(ValueError):
+            unknown.encode()
+        self.assertEqual(PostureFlag.NUMERIC_IK, 0x80)
 
     def test_short_payload_raises(self):
         with self.assertRaises(DecodeError):

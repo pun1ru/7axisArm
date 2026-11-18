@@ -151,6 +151,12 @@ class TestWindowLayout(unittest.TestCase):
         self.assertGreaterEqual(w.tool_dock.height(), 180, "默认工具区太矮，重力拟合报告看不了")
         self.assertGreaterEqual(w.table.height(), 22 * 7, "默认关节表应显示全部 7 行")
 
+    def test_mujoco_page_contains_ik_and_exchange(self):
+        tabs = [self.w.center_tabs.tabText(i) for i in range(self.w.center_tabs.count())]
+        self.assertIn("MuJoCo 仿真", tabs)
+        inner = [self.w.mujoco_tabs.tabText(i) for i in range(self.w.mujoco_tabs.count())]
+        self.assertEqual(inner, ["IK 闭环", "兑换站"])
+
 
 class TestMonitorWindow(unittest.TestCase):
     def setUp(self):

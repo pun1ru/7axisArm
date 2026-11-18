@@ -130,9 +130,9 @@ class SerialBackend(RobotBackend):
 
     def set_ik_target(self, branch: int, x: float, y: float, z: float, roll: float,
                       pitch: float, yaw: float, psi_deg: float, auto_psi: bool = False,
-                      cost_weights: tuple[float, ...] | None = None) -> Future:
+                      cost_weights: tuple[float, ...] | None = None, method: int = 0) -> Future:
         return self.link.set_ik_target(branch, x, y, z, roll, pitch, yaw, psi_deg,
-                                       auto_psi, cost_weights)
+                                       auto_psi, cost_weights, method)
 
     def stop_ik(self) -> Future:
         return self.link.stop_ik()

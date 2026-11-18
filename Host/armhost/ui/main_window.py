@@ -91,16 +91,23 @@ class MonitorWindow(QMainWindow):
         self.release_btn.clicked.connect(self._release_estop)
         tb.addWidget(self.release_btn)
 
-        # ---------------------------------------------------------- 中央：波形 / 三维 两个标签页，关节表常驻下方
+        # ---------------------------------------------------------- 中央：波形 / 三维 / MuJoCo，关节表常驻下方
         self.scope = ScopeWidget(self.ctrl.buffer, joint_count, fps=int(self.cfg["ui"]["scope_fps"]))
         i = self.scope.win_combo.findData(int(self.cfg["ui"]["default_window_s"]))
         if i >= 0:
             self.scope.win_combo.setCurrentIndex(i)
         self.pose = PosePanel(self.ctrl.latest, self._read_device_dh, fps=int(self.cfg["ui"]["view3d_fps"]),
                               read_device_limits=self.ctrl.read_limits)
+        self.host = HostPanel(self.ctrl, joint_count)
+        self.ik = IkPanel(self.ctrl)
+        self.exchange = ExchangePanel(self.ctrl)
+        self.mujoco_tabs = QTabWidget()
+        self.mujoco_tabs.addTab(scrollable(self.ik), "IK 闭环")
+        self.mujoco_tabs.addTab(scrollable(self.exchange), "兑换站")
         self.center_tabs = QTabWidget()
         self.center_tabs.addTab(self.scope, "实时波形")
         self.center_tabs.addTab(self.pose, "三维姿态")
+        self.center_tabs.addTab(self.mujoco_tabs, "MuJoCo 仿真")
         self.table = JointTable(joint_count)
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.center_tabs)
@@ -118,16 +125,9 @@ class MonitorWindow(QMainWindow):
         dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
-        self.host = HostPanel(self.ctrl, joint_count)
-        self.ik = IkPanel(self.ctrl)
-        self.exchange = ExchangePanel(self.ctrl)
-        host_tabs = QTabWidget()
-        host_tabs.addTab(scrollable(self.host), "关节角闭环")
-        host_tabs.addTab(scrollable(self.ik), "IK 闭环")
-        host_tabs.addTab(scrollable(self.exchange), "兑换站")
-        host_dock = QDockWidget("Host 目标", self)
+        host_dock = QDockWidget("Host 关节控制", self)
         host_dock.setObjectName("host_dock")
-        host_dock.setWidget(host_tabs)
+        host_dock.setWidget(scrollable(self.host))
         host_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.addDockWidget(Qt.RightDockWidgetArea, host_dock)
         self.splitDockWidget(dock, host_dock, Qt.Vertical)

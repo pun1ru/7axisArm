@@ -58,6 +58,9 @@ public:
     double JointVelocity(int handle) const;
     /* 写进 qfrc_applied；NaN 当 0。限幅由调用方（JointActuator）负责 */
     void SetJointForce(int handle, double force);
+    /* 初始化阶段按名字直接设置关节位置；之后必须调用 Forward()。 */
+    bool SetJointPosition(const std::string &name, double position);
+    void Forward();
     /* 位置执行器（MJCF actuator）的控制量；主要用于兑换站机构。 */
     int BindActuator(const std::string &name);
     void SetActuatorControl(int handle, double value);
