@@ -2,6 +2,7 @@
  * 构建运行：cmake --build build --target ik_numeric_test && ./build/ik_numeric_test */
 #include <cmath>
 #include <cstdio>
+#include <random>
 
 #include "ik_numeric.h"
 
@@ -54,6 +55,7 @@ struct RunResult {
     JointArray q;
     double max_step_deg;
     bool limit_ok;
+    bool converged;
 };
 
 static RunResult Run(JointArray q, const Mat4 &target, const JointArray &q_ref, const IkCostWeights &w,
@@ -72,7 +74,7 @@ static RunResult Run(JointArray q, const Mat4 &target, const JointArray &q_ref, 
             q[i] += s.dq_deg[i];
             if (q[i] < kMin[i] - 1e-3f || q[i] > kMax[i] + 1e-3f) r.limit_ok = false;
         }
-        if (s.converged) break;
+        if (s.converged) { r.converged = true; break; }
     }
     r.q = q;
     return r;
@@ -91,7 +93,7 @@ int main()
     RunResult r = Run(home, target, home, w, p, 20000);
     std::printf("converge: cycles=%d pos=%.2e m rot=%.2e rad max_step=%.3f deg\n", r.cycles, r.pos_err, r.rot_err,
                 r.max_step_deg);
-    CHECK(r.cycles > 0 && r.cycles < 20000, "did not converge (%d)", r.cycles);
+    CHECK(r.converged, "did not converge (%d cycles)", r.cycles);
     CHECK(r.max_step_deg <= p.max_step_deg + 1e-4, "step %.4f exceeds limit", r.max_step_deg);
     CHECK(r.limit_ok, "joint limit violated");
     const auto fe = ComputePoseError(ForwardKinematics(kDh, r.q), target);
@@ -143,7 +145,24 @@ int main()
     RunResult g = Run(edge, target, home, w, p, 5000);
     CHECK(g.limit_ok, "limit violated from edge start");
 
-    /* 6. 非法输入 */
+    /* 6. 回归：起点离参考构型很远时零空间项不能顶住任务项。
+     * 曾用 (I − J̄J) 当投影，J̄ 带阻尼时它漏进任务空间，300 个随机可达目标只有 13% 到位；精确投影后约 76%。 */
+    {
+        std::mt19937 rng(12345);
+        int converged = 0;
+        const int n = 100;
+        for (int i = 0; i < n; ++i) {
+            JointArray qt{};
+            for (int j = 0; j < 7; ++j) qt[j] = std::uniform_real_distribution<float>(kMin[j], kMax[j])(rng);
+            RunResult rr = Run(JointArray{}, ForwardKinematics(kDh, qt), JointArray{}, w, p, 6000);
+            converged += rr.converged;
+            CHECK(rr.limit_ok, "limit violated on random target %d", i);
+        }
+        std::printf("random reachable targets from q=0: %d/%d converged\n", converged, n);
+        CHECK(converged >= 65, "only %d/%d converged (nullspace leak regression?)", converged, n);
+    }
+
+    /* 7. 非法输入 */
     IkCostWeights bad{};
     bad.weight.fill(0.0f);
     CHECK(!SolveNumericIkStep(kDh, home, target, home, bad, kMin, kMax, p).ok, "zero weights accepted");
