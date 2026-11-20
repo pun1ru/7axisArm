@@ -41,11 +41,17 @@ public:
         Auto,           // 从机：自主运行
         Servant,        // 从机：跟随主机
         Host,           // 上位机设定单关节目标，是否闭环由上位机决定
-        HostIk          // 上位机设定末端位姿和臂角，本机解析逆解后闭环到关节目标
+        HostIk          // 上位机设定 TCP 位姿和臂角，本机解析逆解后闭环到关节目标
     };
 
     enum class HostTargetResult { Ok, WrongState, BadTarget };
     enum class IkTargetResult { Ok, WrongState, BadParam, BadBranch, OutOfReach, RefDegenerate, OutOfLimit };
+    enum class NumericPlanFailure : uint8_t {
+        None = 0,
+        SolverFailed = 1,
+        LimitOrStall = 2,
+        MaxIterations = 3
+    };
 
     /*==================================== 配置（构造后不变） ====================================*/
     struct JointLimit {
@@ -84,6 +90,7 @@ public:
         std::array<int8_t, kJointCount> direction{};
         std::array<JointLimit, kJointCount> limit{};
         std::array<JointGain, kJointCount> gain{};
+        Mat4 tcp = Mat4::Identity();               // DH 末端 -> TCP（夹爪中心）固定工具变换
 
         GripperConfig gripper;
         NumericIkParam ik_numeric;                 // HOST_IK 数值解参数
@@ -119,7 +126,7 @@ public:
     struct Observer {
         WaistObs waist;
         JointObs joint;
-        Pose pose;                   // 正运动学得到的末端位姿（相对腰部连杆坐标系）
+        Pose pose;                   // 正运动学得到的 TCP 位姿（相对腰部连杆坐标系）
         Posture posture;
         GripperObs gripper;
     };
@@ -160,6 +167,20 @@ public:
         uint16_t stall_cycles = 0;      // 连续"没到位但几乎不动"的周期数，超过阈值时 status = OutOfReach
         bool shoulder_singular = false;
         bool wrist_singular = false;
+        /* 数值解先算后跑：planning 时保持 target_.joint 不变，预计算完成后按 trajectory 逐周期执行。 */
+        bool planning = false;
+        bool plan_ready = false;       // 只有成功规划后才能进入轨迹执行，失败不能被空轨迹覆盖成 OK
+        JointArray plan_q_deg{};
+        Mat4 plan_start_pose = Mat4::Identity();
+        Mat4 plan_goal_pose = Mat4::Identity();
+        size_t plan_waypoint_index = 0;
+        size_t plan_waypoint_count = 0;
+        std::vector<JointArray> trajectory;
+        size_t trajectory_index = 0;
+        uint32_t plan_sequence = 0;
+        uint32_t plan_cycles = 0;
+        uint8_t plan_failure = 0;
+        double plan_time_us = 0.0;
     };
 
     struct Target {
@@ -211,7 +232,7 @@ public:
      * UpdateTarget 逼近一小步（加权阻尼最小二乘 + 零空间 + 限位 + 步长限幅，见 ik_numeric.h），
      * cost_weights 当作关节权重 W，权重大的关节动得少，进入时从当前构型出发，不要求分支一致。
      * 以下为 Analytic：从 HOST 进入时校验请求分支与当前分支一致；成功后全部关节投入闭环。
-     * target 是 ForwardKinematics 同一坐标系的末端位姿。Manual 使用 psi_deg，
+     * target 是腰部连杆坐标系下的 TCP 位姿。Manual 使用 psi_deg，
      * Auto 忽略 psi_deg，按当前分支和 cost_weights 自动选择臂角。 */
     IkTargetResult SetIkTarget(const Mat4 &target, const Branch &branch, IkPsiMode psi_mode,
                                float psi_deg, const IkCostWeights &cost_weights,
@@ -255,6 +276,8 @@ private:
     void UpdateTarget();
     IkTargetResult SetNumericIkTarget(const Mat4 &target, const IkCostWeights &cost_weights);
     void StepNumericIk();
+    void StepNumericPlan();
+    void StepNumericTrajectory();
     // 控制
     void ControlJoints();
     void ControlWaistAndGripper(bool active);

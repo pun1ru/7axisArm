@@ -166,6 +166,8 @@ typedef struct ARM_PACKED {
 typedef struct ARM_PACKED {
     uint8_t branch, flags; uint16_t reserved; float psi_deg;
     float x, y, z, roll, pitch, yaw;
+    uint32_t plan_sequence; uint16_t plan_steps, plan_exec_index;
+    uint8_t plan_failure, plan_limit_mask, reserved[2];
 } ArmMsgArmPosture_t;
 
 typedef struct ARM_PACKED {
@@ -199,7 +201,7 @@ ARM_STATIC_ASSERT(sizeof(ArmMsgJointStateHead_t) == 12, jhead);
 ARM_STATIC_ASSERT(sizeof(ArmMsgSystemStatusHead_t) == 32, shead);
 ARM_STATIC_ASSERT(sizeof(ArmCanStatus_t) == 12, can);
 ARM_STATIC_ASSERT(sizeof(ArmMsgEvent_t) == 12, ev);
-ARM_STATIC_ASSERT(sizeof(ArmMsgArmPosture_t) == 32, posture);
+ARM_STATIC_ASSERT(sizeof(ArmMsgArmPosture_t) == 44, posture);
 ARM_STATIC_ASSERT(sizeof(ArmMsgSetIkTarget_t) == 64, ik);
 ARM_STATIC_ASSERT(sizeof(ArmTorqueItem_t) == 5, titem);
 ARM_STATIC_ASSERT(sizeof(ArmMsgParamValue_t) == 12, pval);

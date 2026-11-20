@@ -1,5 +1,7 @@
 #include "arm.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -10,6 +12,148 @@ constexpr float kEncoderCpr = 65536.0f;
 float Clamp(float value, float min_limit, float max_limit)
 {
     return value > max_limit ? max_limit : (value < min_limit ? min_limit : value);
+}
+
+struct Quaternion {
+    double w = 1.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+};
+
+Quaternion QuaternionFromRotation(const Mat4 &T)
+{
+    Quaternion q;
+    const double trace = T(0, 0) + T(1, 1) + T(2, 2);
+    if (trace > 0.0)
+    {
+        const double s = std::sqrt(trace + 1.0) * 2.0;
+        q.w = 0.25 * s;
+        q.x = (T(2, 1) - T(1, 2)) / s;
+        q.y = (T(0, 2) - T(2, 0)) / s;
+        q.z = (T(1, 0) - T(0, 1)) / s;
+    }
+    else if (T(0, 0) > T(1, 1) && T(0, 0) > T(2, 2))
+    {
+        const double s = std::sqrt(1.0 + T(0, 0) - T(1, 1) - T(2, 2)) * 2.0;
+        q.w = (T(2, 1) - T(1, 2)) / s;
+        q.x = 0.25 * s;
+        q.y = (T(0, 1) + T(1, 0)) / s;
+        q.z = (T(0, 2) + T(2, 0)) / s;
+    }
+    else if (T(1, 1) > T(2, 2))
+    {
+        const double s = std::sqrt(1.0 + T(1, 1) - T(0, 0) - T(2, 2)) * 2.0;
+        q.w = (T(0, 2) - T(2, 0)) / s;
+        q.x = (T(0, 1) + T(1, 0)) / s;
+        q.y = 0.25 * s;
+        q.z = (T(1, 2) + T(2, 1)) / s;
+    }
+    else
+    {
+        const double s = std::sqrt(1.0 + T(2, 2) - T(0, 0) - T(1, 1)) * 2.0;
+        q.w = (T(1, 0) - T(0, 1)) / s;
+        q.x = (T(0, 2) + T(2, 0)) / s;
+        q.y = (T(1, 2) + T(2, 1)) / s;
+        q.z = 0.25 * s;
+    }
+    const double norm = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (norm > 1e-12)
+    {
+        q.w /= norm;
+        q.x /= norm;
+        q.y /= norm;
+        q.z /= norm;
+    }
+    if (q.w < 0.0)
+    {
+        q.w = -q.w;
+        q.x = -q.x;
+        q.y = -q.y;
+        q.z = -q.z;
+    }
+    return q;
+}
+
+double QuaternionDot(const Quaternion &a, const Quaternion &b)
+{
+    return a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+Quaternion Slerp(Quaternion a, Quaternion b, double t)
+{
+    double dot = QuaternionDot(a, b);
+    if (dot < 0.0)
+    {
+        b.w = -b.w;
+        b.x = -b.x;
+        b.y = -b.y;
+        b.z = -b.z;
+        dot = -dot;
+    }
+    double wa = 1.0 - t;
+    double wb = t;
+    if (dot < 0.9995)
+    {
+        const double theta = std::acos(std::fmax(-1.0, std::fmin(1.0, dot)));
+        const double sin_theta = std::sin(theta);
+        wa = std::sin((1.0 - t) * theta) / sin_theta;
+        wb = std::sin(t * theta) / sin_theta;
+    }
+    Quaternion q{wa * a.w + wb * b.w, wa * a.x + wb * b.x,
+                 wa * a.y + wb * b.y, wa * a.z + wb * b.z};
+    const double norm = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (norm > 1e-12)
+    {
+        q.w /= norm;
+        q.x /= norm;
+        q.y /= norm;
+        q.z /= norm;
+    }
+    return q;
+}
+
+Mat4 RotationFromQuaternion(const Quaternion &q)
+{
+    Mat4 T = Mat4::Identity();
+    const double xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+    const double xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+    const double wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    T(0, 0) = 1.0 - 2.0 * (yy + zz);
+    T(0, 1) = 2.0 * (xy - wz);
+    T(0, 2) = 2.0 * (xz + wy);
+    T(1, 0) = 2.0 * (xy + wz);
+    T(1, 1) = 1.0 - 2.0 * (xx + zz);
+    T(1, 2) = 2.0 * (yz - wx);
+    T(2, 0) = 2.0 * (xz - wy);
+    T(2, 1) = 2.0 * (yz + wx);
+    T(2, 2) = 1.0 - 2.0 * (xx + yy);
+    return T;
+}
+
+Mat4 InterpolatePose(const Mat4 &start, const Mat4 &goal, double t)
+{
+    if (t <= 0.0)
+    {
+        return start;
+    }
+    if (t >= 1.0)
+    {
+        return goal;
+    }
+    Mat4 out = RotationFromQuaternion(
+        Slerp(QuaternionFromRotation(start), QuaternionFromRotation(goal), t));
+    for (int r = 0; r < 3; ++r)
+    {
+        out(r, 3) = (1.0 - t) * start(r, 3) + t * goal(r, 3);
+    }
+    return out;
+}
+
+double RotationDistanceRad(const Mat4 &a, const Mat4 &b)
+{
+    const double dot = std::fabs(QuaternionDot(QuaternionFromRotation(a), QuaternionFromRotation(b)));
+    return 2.0 * std::acos(std::fmax(-1.0, std::fmin(1.0, dot)));
 }
 
 float WrapPi(float angle_rad)
@@ -262,12 +406,16 @@ bool Arm::SetState(State state)
     if (state != State::HostIk)
     {
         target_.ik.active = false;
+        target_.ik.planning = false;
+        target_.ik.plan_ready = false;
+        target_.ik.trajectory.clear();
+        target_.ik.trajectory_index = 0;
     }
     return true;
 }
 
 /*--------------------------------------观测--------------------------------------*/
-/* 执行器读数 -> 关节量（按 direction 和零点折算）-> 正运动学 -> 末端位姿、臂角、分支 */
+/* 执行器读数 -> 关节量（按 direction 和零点折算）-> 正运动学 -> TCP 位姿、臂角、分支 */
 void Arm::Observe()
 {
     Observer &obs = observer_;
@@ -292,7 +440,7 @@ void Arm::Observe()
 
     const FrameArray frames = ForwardKinematicsFrames(config_.dh, joint.deg);
 
-    obs.pose = PoseFromTransform(frames.back());
+    obs.pose = PoseFromTransform(frames.back() * config_.tcp);
     if (srs_valid_)
     {
         obs.posture.arm_angle = ComputeArmAngle(srs_, frames);
@@ -441,9 +589,11 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     {
         return IkTargetResult::WrongState;
     }
+    /* 协议和界面的 target 都是 TCP；S-R-S 解析/数值逆解在 link8 几何上计算。 */
+    const Mat4 link_target = target * RigidInverse(config_.tcp);
     if (method == IkMethod::Numeric)
     {
-        return SetNumericIkTarget(target, cost_weights);
+        return SetNumericIkTarget(link_target, cost_weights);
     }
     if (method != IkMethod::Analytic)
     {
@@ -508,7 +658,7 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
         const float preferred_psi_deg = target_.ik.active ? target_.ik.psi_deg
                                                           : observer_.posture.arm_angle.psi_deg;
         const IkTargetResult auto_result = SelectAutoPsi(
-            srs_, target, branch, observer_, config_, previous_target_deg, cost_weights,
+            srs_, link_target, branch, observer_, config_, previous_target_deg, cost_weights,
             preferred_psi_deg, psi_deg, solved, next_target, cost);
         if (auto_result != IkTargetResult::Ok)
         {
@@ -517,7 +667,7 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     }
     else
     {
-        solved = SolveIk(srs_, target, branch, psi_deg);
+        solved = SolveIk(srs_, link_target, branch, psi_deg);
 
         if (solved.status == IkStatus::OutOfReach)
         {
@@ -557,7 +707,7 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     target_.ik.step_limited = false;
     target_.ik.converged = false;
     target_.ik.stall_cycles = 0;
-    target_.ik.pose = target;
+    target_.ik.pose = link_target;
     target_.ik.psi_deg = psi_deg;
     target_.ik.psi_mode = psi_mode;
     target_.ik.cost_weights = cost_weights;
@@ -569,9 +719,8 @@ Arm::IkTargetResult Arm::SetIkTarget(const Mat4 &target, const Branch &branch, I
     return IkTargetResult::Ok;
 }
 
-/* 数值解的目标：不一次解出关节角，只记下位姿，之后每个周期由 StepNumericIk 推进一步。
- * 从 HOST 进入时关节目标对齐当前角，参考构型取当前角；已在数值解里更新目标时参考构型保持不变；
- * 从解析解切入时参考构型取当前关节目标。 */
+/* 数值解先算后跑：收到目标后只启动轨迹规划，保持当前关节目标不动。后续控制周期分批计算
+ * 完整关节轨迹，算完后再按规划点逐周期执行；规划失败不会产生运动。 */
 Arm::IkTargetResult Arm::SetNumericIkTarget(const Mat4 &target, const IkCostWeights &cost_weights)
 {
     if (!IsValidIkCostWeights(cost_weights) || !IsValidNumericIkParam(config_.ik_numeric))
@@ -589,18 +738,16 @@ Arm::IkTargetResult Arm::SetNumericIkTarget(const Mat4 &target, const IkCostWeig
         }
     }
 
-    if (target_.align_pending || target_.host.align_pending)
-    {
-        AlignHost();
-    }
     if (status_.state == State::Host)
     {
         if (!SetState(State::HostIk))
         {
             return IkTargetResult::WrongState;
         }
-        AlignHost();
     }
+    /* 每次新数值规划都从实测关节重新对齐。若直接使用上一轮目标，轨迹完成后
+     * 机构因静差/限幅没有跟上时，重新发送同一目标会被误判为“已经在目标处”。 */
+    AlignHost();
 
     const bool keep_reference = target_.ik.active && target_.ik.method == IkMethod::Numeric;
 
@@ -623,72 +770,180 @@ Arm::IkTargetResult Arm::SetNumericIkTarget(const Mat4 &target, const IkCostWeig
     target_.ik.cost_weights = cost_weights;
     target_.ik.cost = 0.0f;
     target_.ik.branch = observer_.posture.branch;
-    target_.ik.status = IkStatus::Ok;
+    target_.ik.status = IkStatus::Planning;
     target_.ik.shoulder_singular = false;
     target_.ik.wrist_singular = false;
+    target_.ik.converged = false;
+    target_.ik.limit_mask = 0;
+    target_.ik.step_limited = false;
+    target_.ik.planning = true;
+    target_.ik.plan_ready = false;
+    ++target_.ik.plan_sequence;
+    target_.ik.plan_cycles = 0;
+    target_.ik.plan_failure = static_cast<uint8_t>(NumericPlanFailure::None);
+    target_.ik.plan_time_us = 0.0;
+    target_.ik.trajectory.clear();
+    JointArray start_q{};
+    for (int i = 0; i < kJointCount; ++i)
+    {
+        start_q[static_cast<size_t>(i)] = target_.joint[i].deg;
+        target_.ik.plan_q_deg[static_cast<size_t>(i)] = start_q[static_cast<size_t>(i)];
+    }
+    target_.ik.plan_start_pose = ForwardKinematics(config_.dh, start_q);
+    target_.ik.plan_goal_pose = target;
+    const double dx = target(0, 3) - target_.ik.plan_start_pose(0, 3);
+    const double dy = target(1, 3) - target_.ik.plan_start_pose(1, 3);
+    const double dz = target(2, 3) - target_.ik.plan_start_pose(2, 3);
+    const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const double rotation = RotationDistanceRad(target_.ik.plan_start_pose, target);
+    const double pos_steps = distance / config_.ik_numeric.plan_cartesian_step_m;
+    const double rot_steps = rotation / config_.ik_numeric.plan_rotation_step_rad;
+    target_.ik.plan_waypoint_count = std::max(
+        1, static_cast<int>(std::ceil(std::max(pos_steps, rot_steps))));
+    target_.ik.plan_waypoint_index = 0;
+    target_.ik.trajectory.reserve(std::min<size_t>(target_.ik.plan_waypoint_count, 4096));
+    target_.ik.trajectory_index = 0;
     return IkTargetResult::Ok;
 }
 
-/* 以上一周期的关节目标为线性化点走一步（不是实测角：PID 的积分项会补偿重力和摩擦造成的静差，
- * 以实测角为起点反而会让指令只领先实测一小步而推不动）。指令领先实测角超过 max_lead_deg 时
- * 钳回，机构跟不上时指令不会一直往前堆。 */
 void Arm::StepNumericIk()
+{
+    if (target_.ik.planning)
+    {
+        StepNumericPlan();
+    }
+    else if (target_.ik.plan_ready)
+    {
+        StepNumericTrajectory();
+    }
+}
+
+/* 规划使用独立的历史构型 plan_q_deg，不修改 target_.joint，因此机械臂在计算阶段保持不动。
+ * 每周期只执行有限数量迭代，避免完整规划阻塞实时控制。 */
+void Arm::StepNumericPlan()
 {
     const NumericIkParam &param = config_.ik_numeric;
     IkTarget &ik = target_.ik;
-    JointArray q{};
     JointArray limit_min{};
     JointArray limit_max{};
 
+    const auto started = std::chrono::steady_clock::now();
     for (int i = 0; i < kJointCount; ++i)
     {
         const size_t idx = static_cast<size_t>(i);
-        q[idx] = target_.joint[i].deg;
         limit_min[idx] = target_.joint[i].limit_min_deg;
         limit_max[idx] = target_.joint[i].limit_max_deg;
     }
 
-    const NumericIkStep step = SolveNumericIkStep(config_.dh, q, ik.pose, ik.reference_deg,
-                                                  ik.cost_weights, limit_min, limit_max, param);
-    if (!step.ok)
+    for (int iteration = 0; iteration < param.plan_iterations_per_cycle; ++iteration)
     {
-        return;   // 保持上一周期的目标
+        if (ik.plan_waypoint_index >= ik.plan_waypoint_count)
+        {
+            ik.planning = false;
+            ik.plan_ready = true;
+            ik.converged = true;
+            ik.status = IkStatus::Ok;
+            break;
+        }
+        const double path_fraction =
+            static_cast<double>(ik.plan_waypoint_index + 1) /
+            static_cast<double>(ik.plan_waypoint_count);
+        const Mat4 waypoint = InterpolatePose(ik.plan_start_pose, ik.plan_goal_pose, path_fraction);
+        const NumericIkStep step = SolveNumericIkStep(
+            config_.dh, ik.plan_q_deg, waypoint, ik.reference_deg, ik.cost_weights,
+            limit_min, limit_max, param);
+        if (!step.ok)
+        {
+            ik.planning = false;
+            ik.plan_ready = false;
+            ik.trajectory.clear();
+            ik.status = IkStatus::OutOfReach;
+            ik.plan_failure = static_cast<uint8_t>(NumericPlanFailure::SolverFailed);
+            break;
+        }
+
+        ik.pos_err_m = static_cast<float>(step.pos_err_m);
+        ik.rot_err_deg = static_cast<float>(step.rot_err_rad * kRadToDeg);
+        ik.limit_mask = step.limit_mask;
+        ik.step_limited = step.step_limited;
+        if (step.converged)
+        {
+            ++ik.plan_waypoint_index;
+            ik.stall_cycles = 0;
+            continue;
+        }
+
+        JointArray next{};
+        float peak_deg = 0.0f;
+        for (int i = 0; i < kJointCount; ++i)
+        {
+            const size_t idx = static_cast<size_t>(i);
+            next[idx] = Clamp(ik.plan_q_deg[idx] + step.dq_deg[idx], limit_min[idx], limit_max[idx]);
+            peak_deg = std::fmax(peak_deg, std::fabs(next[idx] - ik.plan_q_deg[idx]));
+        }
+        ik.plan_q_deg = next;
+        ik.trajectory.push_back(next);
+        ++ik.plan_cycles;
+
+        constexpr float kPlanStallStepDeg = 1e-3f;
+        constexpr uint16_t kPlanStallCycles = 250;
+        if (peak_deg < kPlanStallStepDeg)
+        {
+            if (ik.stall_cycles < kPlanStallCycles)
+            {
+                ++ik.stall_cycles;
+            }
+        }
+        else
+        {
+            ik.stall_cycles = 0;
+        }
+        if (ik.stall_cycles >= kPlanStallCycles)
+        {
+            ik.planning = false;
+            ik.plan_ready = false;
+            ik.trajectory.clear();
+            ik.status = IkStatus::OutOfReach;
+            ik.plan_failure = static_cast<uint8_t>(NumericPlanFailure::LimitOrStall);
+            break;
+        }
+        if (ik.plan_cycles >= static_cast<uint32_t>(param.max_plan_cycles))
+        {
+            ik.planning = false;
+            ik.plan_ready = false;
+            ik.trajectory.clear();
+            ik.status = IkStatus::OutOfReach;
+            ik.plan_failure = static_cast<uint8_t>(NumericPlanFailure::MaxIterations);
+            break;
+        }
     }
 
-    float peak_deg = 0.0f;
+    const auto finished = std::chrono::steady_clock::now();
+    ik.plan_time_us += std::chrono::duration<double, std::micro>(finished - started).count();
+}
+
+/* 规划完成后按预计算轨迹逐周期推进。轨迹已经过限位和奇异检查，执行层不再采样求解；
+ * 每周期只更新到下一个规划点，轨迹结束后持续保持最终关节目标。 */
+void Arm::StepNumericTrajectory()
+{
+    IkTarget &ik = target_.ik;
+    if (ik.trajectory_index >= ik.trajectory.size())
+    {
+        ik.converged = true;
+        ik.status = IkStatus::Ok;
+        return;
+    }
+
+    const JointArray &next = ik.trajectory[ik.trajectory_index];
     for (int i = 0; i < kJointCount; ++i)
     {
         const size_t idx = static_cast<size_t>(i);
-        const float lead = static_cast<float>(param.max_lead_deg);
-        const float observed = observer_.joint.deg[idx];
-        float next = Clamp(q[idx] + step.dq_deg[idx], observed - lead, observed + lead);
-
-        next = Clamp(next, limit_min[idx], limit_max[idx]);
-        peak_deg = std::fmax(peak_deg, std::fabs(next - q[idx]));
-        target_.joint[i].deg = next;
+        target_.joint[i].deg = Clamp(next[idx], target_.joint[i].limit_min_deg,
+                                     target_.joint[i].limit_max_deg);
     }
-
-    ik.pos_err_m = static_cast<float>(step.pos_err_m);
-    ik.rot_err_deg = static_cast<float>(step.rot_err_rad * kRadToDeg);
-    ik.limit_mask = step.limit_mask;
-    ik.step_limited = step.step_limited;
-    ik.converged = step.converged;
-
-    /* 没到位却几乎不动：目标够不到，或被限位 / 奇异挡住 */
-    constexpr float kStallStepDeg = 1e-3f;
-    constexpr uint16_t kStallCycles = 250;   // 2 ms 周期下 0.5 s
-    if (!step.converged && peak_deg < kStallStepDeg)
-    {
-        if (ik.stall_cycles < kStallCycles)
-        {
-            ++ik.stall_cycles;
-        }
-    }
-    else
-    {
-        ik.stall_cycles = 0;
-    }
-    ik.status = ik.stall_cycles >= kStallCycles ? IkStatus::OutOfReach : IkStatus::Ok;
+    ++ik.trajectory_index;
+    ik.converged = ik.trajectory_index >= ik.trajectory.size();
+    ik.status = IkStatus::Ok;
 }
 
 void Arm::StopHostControl()
@@ -702,6 +957,10 @@ void Arm::StopHostControl()
     if (status_.state == State::HostIk)
     {
         target_.ik.active = false;
+        target_.ik.planning = false;
+        target_.ik.plan_ready = false;
+        target_.ik.trajectory.clear();
+        target_.ik.trajectory_index = 0;
         SetState(State::Host);
     }
 }

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..kinematics import DHTable
-from ..kinematics.workspace import sample_workspace
+from ..kinematics.workspace import APPROACH_SECTOR_COUNT, sample_workspace
 from ..model import branch_text
 
 
@@ -24,6 +24,7 @@ class WorkspacePanel(QWidget):
     cloud_ready = Signal(object)
     cleared = Signal()
     visibility_changed = Signal(bool)
+    layers_changed = Signal()
     fit_requested = Signal()
 
     def __init__(self, table: DHTable,
@@ -78,10 +79,26 @@ class WorkspacePanel(QWidget):
         self.show_cb = QCheckBox("在三维视图中显示")
         self.show_cb.setChecked(True)
         self.show_cb.toggled.connect(self.visibility_changed)
+        self.reachable_cb = QCheckBox("可达工作区（浅蓝）")
+        self.reachable_cb.setChecked(True)
+        self.reachable_cb.setToolTip("TCP 在关节限位内至少有一个构型能到达的位置")
+        self.flexible_cb = QCheckBox("灵活工作区（橙色）")
+        self.flexible_cb.setChecked(True)
+        self.flexible_cb.setToolTip("同一体素内至少命中 N 个不同的 TCP 接近方向；它是可达区的子集")
+        self.reachable_cb.toggled.connect(lambda _on: self.layers_changed.emit())
+        self.flexible_cb.toggled.connect(lambda _on: self.layers_changed.emit())
+        self.flexible_sectors = QSpinBox()
+        self.flexible_sectors.setRange(1, APPROACH_SECTOR_COUNT)
+        self.flexible_sectors.setValue(3)
+        self.flexible_sectors.setSuffix(" 个扇区")
+        self.flexible_sectors.setToolTip(
+            "TCP 的 z 轴按 26 个最近方向离散化。同一体素覆盖的方向数达到此值才标为灵活工作区；"
+            "1 表示与可达工作区相同")
         self.fit_cb = QCheckBox("计算后适配视角")
         self.fit_cb.setChecked(True)
         self.samples.valueChanged.connect(self._sample_changed)
         self.voxel_mm.valueChanged.connect(self._sample_changed)
+        self.flexible_sectors.valueChanged.connect(self._sample_changed)
 
         sample_box = QGroupBox("采样")
         sg = QGridLayout(sample_box)
@@ -91,8 +108,12 @@ class WorkspacePanel(QWidget):
         sg.addWidget(self.branch, 1, 1)
         sg.addWidget(QLabel("体素尺寸"), 2, 0)
         sg.addWidget(self.voxel_mm, 2, 1)
-        sg.addWidget(self.show_cb, 3, 0, 1, 2)
-        sg.addWidget(self.fit_cb, 4, 0, 1, 2)
+        sg.addWidget(QLabel("灵活判据"), 3, 0)
+        sg.addWidget(self.flexible_sectors, 3, 1)
+        sg.addWidget(self.reachable_cb, 4, 0, 1, 2)
+        sg.addWidget(self.flexible_cb, 5, 0, 1, 2)
+        sg.addWidget(self.show_cb, 6, 0, 1, 2)
+        sg.addWidget(self.fit_cb, 7, 0, 1, 2)
 
         self.calc_btn = QPushButton("计算并显示")
         self.calc_btn.clicked.connect(self.calculate)
@@ -105,11 +126,14 @@ class WorkspacePanel(QWidget):
         actions.addWidget(self.clear_btn)
         actions.addWidget(self.fit_btn)
 
-        self.status = QLabel("在关节限位内采样 100000 个构型，计算末端位置可达点云")
+        self.status = QLabel("在关节限位内采样 100000 个构型，计算 TCP 可达/灵活工作区")
         self.status.setWordWrap(True)
         self.status.setObjectName("title")
-        hint = QLabel("提示：点云表示末端位置；用上方“前视 / 侧视 / 俯视”"
-                      "可看三个投影包络。")
+        hint = QLabel(
+            "可达工作区：TCP 至少有一个关节构型能到达的位置。\n"
+            "灵活工作区：可达区的子集，同一体素内的 TCP 接近方向覆盖至少 N 个离散扇区。\n"
+            "它不是“任意姿态都可达”的严格灵巧工作区；N 越大，要求的方向多样性越高。\n"
+            "浅蓝为可达区，橙色为灵活区；两者可分别关闭显示。")
         hint.setWordWrap(True)
         hint.setObjectName("title")
 
@@ -155,7 +179,8 @@ class WorkspacePanel(QWidget):
             try:
                 cloud = sample_workspace(self._table, limits, samples=self.samples.value(),
                                          voxel_m=self.voxel_mm.value() / 1000.0,
-                                         branch=self.branch.currentData())
+                                         branch=self.branch.currentData(),
+                                         flexible_min_sectors=self.flexible_sectors.value())
             finally:
                 QGuiApplication.restoreOverrideCursor()
         except Exception as exc:
@@ -166,8 +191,10 @@ class WorkspacePanel(QWidget):
         voxel_note = "" if abs(cloud.voxel_m - self.voxel_mm.value() / 1000.0) < 1e-9 \
             else f"（自动放粗到 {cloud.voxel_m * 1000:.1f} mm）"
         branch_info = "全部 8 分支" if cloud.branch is None else f"分支 #{cloud.branch}"
-        self.status.setText(f"{branch_info}，采样 {cloud.samples:,} → {len(cloud.points_m):,} 个体素"
-                            f"{voxel_note}，耗时 {cloud.elapsed_ms:.0f} ms")
+        self.status.setText(
+            f"{branch_info}，采样 {cloud.samples:,} → 可达 {len(cloud.points_m):,} 体素，"
+            f"灵活 {len(cloud.flexible_points_m):,} 体素（≥{cloud.flexible_min_sectors} 个接近方向）"
+            f"{voxel_note}，耗时 {cloud.elapsed_ms:.0f} ms")
         self.cloud_ready.emit(cloud)
         if self.fit_cb.isChecked():
             self.fit_requested.emit()
@@ -188,8 +215,9 @@ class WorkspacePanel(QWidget):
             self.invalidate()
         branch = self.branch.currentData()
         branch_info = "全部 8 分支" if branch is None else f"分支 #{branch}"
-        self.status.setText(f"{branch_info}：将采样 {self.samples.value():,} 个构型，体素 "
-                            f"{self.voxel_mm.value():.1f} mm")
+        self.status.setText(
+            f"{branch_info}：将采样 {self.samples.value():,} 个构型，体素 "
+            f"{self.voxel_mm.value():.1f} mm，灵活阈值 ≥{self.flexible_sectors.value()} 个方向")
 
     def _branch_changed(self) -> None:
         self._sample_changed()

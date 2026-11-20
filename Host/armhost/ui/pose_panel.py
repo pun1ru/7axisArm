@@ -97,11 +97,18 @@ class DHEditor(QWidget):
         self.src.setText(f"当前来源：{t.source}")
         self._base_xyz = tuple(t.base_xyz_m)
         self._base_rpy = tuple(t.base_rpy_deg)
+        self._tool_xyz = tuple(t.tool_xyz_m)
+        self._tool_rpy = tuple(t.tool_rpy_deg)
         self.base_info.setText("腰部安装（世界 → DH 基座）："
                                f"xyz = ({self._base_xyz[0]:.6f}, {self._base_xyz[1]:.6f}, "
                                f"{self._base_xyz[2]:.6f}) m，"
                                f"rpy = ({self._base_rpy[0]:.3f}, {self._base_rpy[1]:.3f}, "
-                               f"{self._base_rpy[2]:.3f})°")
+                               f"{self._base_rpy[2]:.3f})°\n"
+                               "TCP（link8 → 夹爪中心）："
+                               f"xyz = ({self._tool_xyz[0] * 1000:.3f}, {self._tool_xyz[1] * 1000:.3f}, "
+                               f"{self._tool_xyz[2] * 1000:.3f}) mm，"
+                               f"rpy = ({self._tool_rpy[0]:.3f}, {self._tool_rpy[1]:.3f}, "
+                               f"{self._tool_rpy[2]:.3f})°")
         if emit:
             self.applied.emit(t)
 
@@ -116,7 +123,8 @@ class DHEditor(QWidget):
                 except ValueError:
                     raise ValueError(f"J{r} 第 {c + 1} 列不是数字：{txt!r}") from None
             rows.append(DHRow(*vals))
-        return DHTable(rows, "手动编辑", self._base_xyz, self._base_rpy)
+        return DHTable(rows, "手动编辑", self._base_xyz, self._base_rpy,
+                       self._tool_xyz, self._tool_rpy)
 
     def _on_edit(self, _it) -> None:
         if self._loading or not self.auto.isChecked():
@@ -176,6 +184,8 @@ class DHEditor(QWidget):
             table = fut.result().copy()
             table.base_xyz_m = self._base_xyz
             table.base_rpy_deg = self._base_rpy
+            table.tool_xyz_m = self._tool_xyz
+            table.tool_rpy_deg = self._tool_rpy
             self.set_table(table, emit=True)
         except Exception as e:
             self.src.setText(f"当前来源：{self._source}（设备读取失败：{e}）")
@@ -215,6 +225,7 @@ class PosePanel(QWidget):
         self.checks: dict[str, QCheckBox] = {}
         for k, (attr, txt) in enumerate((("show_links", "连杆"), ("show_frames", "关节坐标系"),
                                          ("show_axes_line", "关节转轴"), ("show_labels", "关节名称"),
+                                         ("show_tcp", "TCP（夹爪中心）"),
                                          ("show_grid", "地面网格"), ("show_world", "世界坐标轴"))):
             cb = QCheckBox(txt)
             cb.setChecked(getattr(self.view, attr))
@@ -308,6 +319,7 @@ class PosePanel(QWidget):
         self.workspace.cloud_ready.connect(self._on_workspace_ready)
         self.workspace.cleared.connect(self.view.clear_workspace)
         self.workspace.visibility_changed.connect(lambda on: self.view.set_option("show_workspace", on))
+        self.workspace.layers_changed.connect(self._sync_workspace_layers)
         self.workspace.fit_requested.connect(self.view.fit_workspace)
 
         ctrl = QWidget()
@@ -345,10 +357,18 @@ class PosePanel(QWidget):
 
     def _on_workspace_ready(self, cloud) -> None:
         branch = "全部 8 分支" if cloud.branch is None else f"分支 #{cloud.branch}"
-        info = (f"工作空间（{branch}）：{len(cloud.points_m):,} 体素 / {cloud.samples:,} 采样 / "
+        info = (f"TCP 工作区（{branch}）：可达 {len(cloud.points_m):,} / "
+                f"灵活 {len(cloud.flexible_points_m):,} 体素\n"
+                f"  灵活判据 ≥{cloud.flexible_min_sectors} 个接近方向 / {cloud.samples:,} 采样 / "
                 f"体素 {cloud.voxel_m * 1000:.1f} mm")
-        self.view.set_workspace(cloud.points_m, cloud.density, info)
+        self.view.set_workspace(cloud.points_m, cloud.density, info,
+                                cloud.flexible_points_m, cloud.flexible_density)
+        self._sync_workspace_layers()
         self.view.set_option("show_workspace", self.workspace.show_cb.isChecked())
+
+    def _sync_workspace_layers(self) -> None:
+        self.view.set_option("show_workspace_reachable", self.workspace.reachable_cb.isChecked())
+        self.view.set_option("show_workspace_flexible", self.workspace.flexible_cb.isChecked())
 
     def _on_src(self) -> None:
         manual = self.src_manual.isChecked()

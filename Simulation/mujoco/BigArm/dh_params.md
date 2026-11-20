@@ -41,6 +41,17 @@ $${}^{i-1}T_i = R_x(\alpha_{i-1})\,D_x(a_{i-1})\,R_z(\theta_i)\,D_z(d_i)$$
 
 两个关节均为 `prismatic`，局部 `axis = 0 0 1`；`q=0` 对应 CAD 装配位置。
 
+## 4.1 TCP（夹爪中心）
+
+`TCP` 固定在 `link8` 坐标系中，原点取 `q=0` 时两个夹爪质心的中点：
+
+| 项目 | 数值 |
+|---|---:|
+| link8 -> TCP xyz | `(-0.005310, -0.001595, 0.139056) m` |
+| link8 -> TCP rpy | `(0, 0, 0) deg` |
+
+坐标轴沿用 `link8`。两个 mobile finger 对称开合时，中点不变，因此该 TCP 不随夹爪开度变化。
+
 ## 5. 验证
 
 - URDF 在 q=0 时的 visual/collision/inertial 与原始 CAD 最大位置误差：**4.6e-10 m / 1.1e-9 rad**。

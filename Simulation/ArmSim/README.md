@@ -164,7 +164,7 @@ link.set_host_target(0, 20.0, closed_loop=True).result(1.0)   # joint2 转到多
 posture = link.mirror.snapshot().posture
 link.set_ik_target(posture.branch, posture.x, posture.y, posture.z,
                    posture.roll, posture.pitch, posture.yaw, posture.psi_deg).result(1.0)
-# 数值解：固件每周期迭代一小步（加权 DLS + 零空间 + 限位/步长约束），不要求分支，ψ 不起作用
+# 数值解：先预计算完整关节轨迹（加权 DLS + 零空间 + 限位/步长约束），计算完成后执行，不要求分支，ψ 不起作用
 from armhost.protocol.enums import IkMethod
 link.set_ik_target(0, posture.x, posture.y, posture.z + 0.05,
                    posture.roll, posture.pitch, posture.yaw, 0.0,
@@ -174,7 +174,7 @@ link.stop_ik().result(1.0)                                    # 回到 HOST
 
 `--host` 下主臂直接进入 HOST，不跑脚本、不刷终端，所有关节一开始都不闭环，只有重力前馈托着，
 等上位机发 `SET_HOST_TARGET`。`SET_IK_TARGET` 会先校验请求分支与当前分支一致，再调用 S-R-S
-解析逆解、检查关节限位并把 7 个关节全部切到闭环；`ARM_POSTURE` 周期上报当前分支、ψ 和末端位姿。
+解析逆解、检查关节限位并把 7 个关节全部切到闭环；`ARM_POSTURE` 周期上报当前分支、ψ 和 TCP 位姿。TCP 是两根夹爪质心的中点，协议层的 IK 目标同样使用该点。
 数值解在 `Algorithm/ik_numeric.cpp`，参数在 `NumericIkParam`（默认值见 `ik_numeric.h`，`Arm::Config::ik_numeric`）。
 算法测试：`cmake --build build --target ik_numeric_test && ./build/ik_numeric_test`。
 仿真强制按实时节拍跑。协议只覆盖主臂 7 个关节：`JOINT_STATE` 100 Hz 上报，

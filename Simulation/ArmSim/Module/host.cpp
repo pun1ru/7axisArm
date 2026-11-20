@@ -1,5 +1,6 @@
 #include "host.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -50,11 +51,11 @@ constexpr uint8_t kIkActionStop = 1;       // 退出 HOST_IK，回到 HOST
 constexpr uint8_t kIkPsiManual = 0;        // 使用 payload 中的 psi_deg
 constexpr uint8_t kIkPsiAuto = 1;          // 按权重自动选择 ψ
 constexpr uint8_t kIkMethodAnalytic = 0;   // 解析解：一次算出目标关节角
-constexpr uint8_t kIkMethodNumeric = 1;    // 数值解：每周期迭代一小步
+constexpr uint8_t kIkMethodNumeric = 1;    // 数值解：先规划完整关节轨迹，再逐周期执行
 
 constexpr size_t kIkTargetSizeLegacy = 32;
 constexpr size_t kIkTargetSize = 64;
-constexpr size_t kPostureSize = 32;
+constexpr size_t kPostureSize = 44;
 constexpr uint16_t kPostureDivider = 5;    // 每 5 帧 JOINT_STATE 发一帧 ARM_POSTURE
 constexpr size_t kExchangeCommandSize = 40;
 constexpr size_t kExchangeStateSize = 80;
@@ -338,7 +339,7 @@ void Host::SendJointState(double sim_time_s, uint32_t now_ms)
     SendFrame(kMsgJointState, payload, sizeof(payload));
 }
 
-/* 当前构型量：分支、臂角、末端位姿，以及最近一次 IK 求解结果。UI 只读显示。 */
+/* 当前构型量：分支、臂角、TCP 位姿，以及最近一次 IK 求解结果。UI 只读显示。 */
 void Host::SendPosture()
 {
     uint8_t payload[kPostureSize] = {};
@@ -372,7 +373,15 @@ void Host::SendPosture()
             flags |= kPostureNumericIk;
         }
     }
+    const double plan_units = ik.plan_time_us / 100.0;
+    uint16_t plan_time_0_1ms =
+        plan_units >= 65535.0 ? 65535U : static_cast<uint16_t>(std::lround(plan_units));
+    if (ik.method == IkMethod::Numeric && ik.plan_time_us > 0.0 && plan_time_0_1ms == 0)
+    {
+        plan_time_0_1ms = 1;   // 0 保留为“尚未规划”，极短规划也至少上报 0.1 ms
+    }
     payload[1] = flags;
+    PutU16(payload + 2, plan_time_0_1ms);
     PutFloat(payload + 4, obs.posture.arm_angle.psi_deg);
     PutFloat(payload + 8, obs.pose.position_m[0]);
     PutFloat(payload + 12, obs.pose.position_m[1]);
@@ -380,6 +389,13 @@ void Host::SendPosture()
     PutFloat(payload + 20, obs.pose.euler_deg[0]);
     PutFloat(payload + 24, obs.pose.euler_deg[1]);
     PutFloat(payload + 28, obs.pose.euler_deg[2]);
+    PutU32(payload + 32, ik.plan_sequence);
+    const size_t steps = ik.trajectory.size();
+    PutU16(payload + 36, static_cast<uint16_t>(std::min<size_t>(steps, 0xFFFFU)));
+    PutU16(payload + 38, static_cast<uint16_t>(
+        std::min<size_t>(ik.trajectory_index, 0xFFFFU)));
+    payload[40] = ik.plan_failure;
+    payload[41] = ik.limit_mask;
     SendFrame(kMsgArmPosture, payload, sizeof(payload));
 }
 

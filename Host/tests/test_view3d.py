@@ -17,8 +17,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from armhost.kinematics import DHTable, current_dh  # noqa: E402
 from armhost.model.state import RobotSample  # noqa: E402
-from armhost.protocol import JointRecord  # noqa: E402
+from armhost.protocol import ArmPosture, JointRecord, PostureFlag  # noqa: E402
+from armhost.protocol.enums import IkMethod  # noqa: E402
 from armhost.ui import theme  # noqa: E402
+from armhost.ui.ik_panel import IkPanel  # noqa: E402
 from armhost.ui.pose_panel import DHEditor, PosePanel  # noqa: E402
 from armhost.ui.view3d import View3D  # noqa: E402
 
@@ -45,12 +47,12 @@ class TestView3D(unittest.TestCase):
         self.assertTrue(v.world_mount)
         np.testing.assert_allclose(v.frames[0][:3, 3], table.base_xyz_m, atol=1e-12)
         np.testing.assert_allclose(v.end_pose()[0] * 1000.0,
-                                   (-383.614217, 71.347006, 362.332865), atol=1e-4)
+                                   (-513.652049, 82.281939, 410.685698), atol=1e-4)
 
         v.set_option("world_mount", False)
         np.testing.assert_allclose(v.frames[0][:3, 3], 0.0, atol=1e-12)
         np.testing.assert_allclose(v.end_pose()[0] * 1000.0,
-                                   (324.332865, 384.173057, -92.2), atol=1e-4)
+                                   (372.685698, 514.210889, -103.134934), atol=1e-4)
 
     def test_render_and_throttle(self):
         v = View3D(DHTable())
@@ -98,6 +100,101 @@ class TestView3D(unittest.TestCase):
 
 
 class TestPosePanel(unittest.TestCase):
+    def test_numeric_plan_failure_is_not_shown_as_success(self):
+        panel = IkPanel(None)
+        panel._supported = True
+        panel._next_param_try = float("inf")
+        panel.method_box.setCurrentIndex(panel.method_box.findData(int(IkMethod.NUMERIC)))
+        posture = ArmPosture(
+            0, PostureFlag(int(PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK)
+                           | (1 << 4)),
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 9, 3, 0)
+        sample = RobotSample(0, time.monotonic_ns(), 0, 7, 0, 0,
+                             tuple(JointRecord(angle_deg=0.0) for _ in range(7)), posture)
+        panel.tick(sample)
+        self.assertIn("计算失败", panel.plan_label.text())
+        self.assertIn("规划失败", panel.target_state_label.text())
+        self.assertIn("不会运动", panel.target_state_label.text())
+        panel.close()
+        panel.deleteLater()
+        pump(0.01)
+
+    def test_numeric_zero_length_plan_reports_no_motion_needed(self):
+        panel = IkPanel(None)
+        panel._supported = True
+        panel._next_param_try = float("inf")
+        panel._initialized = True
+        panel._plan_base_sequence = 0
+        panel.method_box.setCurrentIndex(panel.method_box.findData(int(IkMethod.NUMERIC)))
+        posture = ArmPosture(
+            0, PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 93, 1, 0, 0)
+        posture.plan_meta_valid = True
+        sample = RobotSample(0, time.monotonic_ns(), 0, 7, 0, 0,
+                             tuple(JointRecord(angle_deg=0.0) for _ in range(7)), posture)
+        panel.tick(sample)
+        self.assertIn("无需运动", panel.plan_label.text())
+        self.assertIn("已在目标", panel.target_state_label.text())
+        panel.close()
+        panel.deleteLater()
+        pump(0.01)
+
+    def test_legacy_posture_does_not_infer_zero_length_plan(self):
+        panel = IkPanel(None)
+        panel._supported = True
+        panel._next_param_try = float("inf")
+        panel.method_box.setCurrentIndex(panel.method_box.findData(int(IkMethod.NUMERIC)))
+        flags = int(PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK)
+        payload = ArmPosture.LEGACY_S.pack(
+            0, flags, 22, 0.0, 0.919, 0.0, 0.0, 0.0, 0.0, 0.0)
+        posture = ArmPosture.decode(payload)
+        sample = RobotSample(0, time.monotonic_ns(), 0, 7, 0, 0,
+                             tuple(JointRecord(angle_deg=0.0) for _ in range(7)), posture)
+        panel.tick(sample)
+        self.assertFalse(posture.plan_meta_valid)
+        self.assertIn("旧版", panel.plan_label.text())
+        self.assertNotIn("无需运动", panel.plan_label.text())
+        panel.close()
+        panel.deleteLater()
+        pump(0.01)
+
+    def test_zero_trajectory_with_large_error_is_reported_as_anomaly(self):
+        panel = IkPanel(None)
+        panel._supported = True
+        panel._next_param_try = float("inf")
+        panel._initialized = True
+        panel._plan_base_sequence = 0
+        panel.method_box.setCurrentIndex(panel.method_box.findData(int(IkMethod.NUMERIC)))
+        posture = ArmPosture(
+            0, PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK,
+            0.0, 0.919, 0.0, 0.0, 0.0, 0.0, 0.0, 22, 1, 0, 0)
+        posture.plan_meta_valid = True
+        sample = RobotSample(0, time.monotonic_ns(), 0, 7, 0, 0,
+                             tuple(JointRecord(angle_deg=0.0) for _ in range(7)), posture)
+        panel.tick(sample)
+        self.assertIn("规划异常", panel.plan_label.text())
+        self.assertNotIn("无需运动", panel.plan_label.text())
+        self.assertIn("实际 TCP 仍有明显误差", panel.target_state_label.text())
+        panel.close()
+        panel.deleteLater()
+        pump(0.01)
+
+    def test_ik_panel_actual_tcp_and_tracking_error(self):
+        panel = IkPanel(None)
+        for key, value in (("x", 0.0), ("y", 0.0), ("z", 0.0), ("roll", 0.0),
+                           ("pitch", 0.0), ("yaw", 0.0), ("psi", 0.0)):
+            panel.fields[key].setValue(value)
+        posture = ArmPosture(branch=0, flags=PostureFlag.VALID, psi_deg=12.0,
+                             x=0.010, y=0.0, z=0.0, roll=90.0, pitch=0.0, yaw=0.0)
+        panel._update_pose_display(posture)
+        self.assertIn("X   +10.000", panel.actual_pose_label.text())
+        self.assertIn("90.000", panel.actual_pose_label.text())
+        self.assertIn("10.000", panel.track_error_label.text())
+        self.assertIn("90.000", panel.track_error_label.text())
+        panel.close()
+        panel.deleteLater()
+        pump(0.01)
+
     def test_device_dh_preserves_waist_mount(self):
         table = DHTable(base_xyz_m=(0.001, -0.02, 0.038), base_rpy_deg=(90.0, -90.0, 0.0))
         device = table.copy()
@@ -172,8 +269,17 @@ class TestPosePanel(unittest.TestCase):
         p.workspace.calculate()
         pump(0.15)
         self.assertGreater(len(p.view.workspace_points), 0)
+        self.assertGreater(len(p.view.workspace_flexible_points), 0)
+        self.assertLessEqual(len(p.view.workspace_flexible_points), len(p.view.workspace_points))
         self.assertTrue(p.view.show_workspace)
-        self.assertIn("工作空间", p.view.workspace_info)
+        self.assertIn("TCP 工作区", p.view.workspace_info)
+        self.assertIn("灵活", p.view.workspace_info)
+
+        p.workspace.reachable_cb.setChecked(False)
+        pump(0.02)
+        self.assertFalse(p.view.show_workspace_reachable)
+        self.assertTrue(p.view.show_workspace_flexible)
+        p.workspace.reachable_cb.setChecked(True)
 
         p.workspace.branch.setCurrentIndex(p.workspace.branch.findData(2))
         self.assertEqual(len(p.view.workspace_points), 0)       # 换分支后旧点云必须清掉

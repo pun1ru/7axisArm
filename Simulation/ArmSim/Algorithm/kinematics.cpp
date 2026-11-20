@@ -50,6 +50,23 @@ Mat4 TransformFromXyzRpy(const std::array<float, 3> &xyz_m, const std::array<flo
     return T;
 }
 
+Mat4 RigidInverse(const Mat4 &T)
+{
+    Mat4 out = Mat4::Identity();
+    for (int r = 0; r < 3; ++r)
+    {
+        for (int c = 0; c < 3; ++c)
+        {
+            out(r, c) = T(c, r);
+        }
+    }
+    for (int r = 0; r < 3; ++r)
+    {
+        out(r, 3) = -(out(r, 0) * T(0, 3) + out(r, 1) * T(1, 3) + out(r, 2) * T(2, 3));
+    }
+    return out;
+}
+
 Mat4 DhTransform(const DhParam &p, float q_deg)
 {
     const float theta = (q_deg + p.theta_offset_deg) * kDegToRad;

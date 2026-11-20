@@ -228,11 +228,29 @@ class TestMessages(unittest.TestCase):
         posture = ArmPosture(5, PostureFlag.VALID | PostureFlag.IK_ACTIVE, 12.5,
                              0.125, -0.25, 0.375, 4.5, 5.5, 6.5)
         payload = posture.encode()
-        self.assertEqual(len(payload), 32)
+        self.assertEqual(len(payload), 44)
         got = decode_payload(MsgType.ARM_POSTURE, payload)
         self.assertEqual(got, posture)
         self.assertTrue(got.valid)
         self.assertTrue(got.ik_active)
+        legacy = posture.LEGACY_S.pack(5, int(PostureFlag.VALID | PostureFlag.IK_ACTIVE),
+                                       0, 12.5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5)
+        old = decode_payload(MsgType.ARM_POSTURE, legacy)
+        self.assertEqual((old.plan_sequence, old.plan_steps, old.plan_exec_index), (0, 0, 0))
+        self.assertFalse(old.plan_meta_valid)
+
+        planning = ArmPosture(
+            5, PostureFlag(int(PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK)
+                           | (3 << 4)),
+            12.5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5, 1234, 7, 120, 35, 2, 0x40)
+        got = decode_payload(MsgType.ARM_POSTURE, planning.encode())
+        self.assertEqual(got, planning)
+        self.assertTrue(got.planning)
+        self.assertTrue(got.plan_meta_valid)
+        self.assertTrue(got.plan_detail_valid)
+        self.assertAlmostEqual(got.plan_time_ms, 123.4)
+        self.assertEqual((got.plan_sequence, got.plan_steps, got.plan_exec_index), (7, 120, 35))
+        self.assertEqual((got.plan_failure, got.plan_limit_mask), (2, 0x40))
 
     def test_ik_target_auto_psi_and_legacy_payload(self):
         weights = (1.0, 0.5, 2.0, 0.0, 3.0, 1.5, 4.0)
