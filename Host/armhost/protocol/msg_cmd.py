@@ -139,7 +139,7 @@ class SetIkTarget:
     SET：从 HOST 进入或更新 HOST_IK。branch = bit0 肩 / bit1 肘 / bit2 腕，
     置位表示对应 λ = -1。STOP：退出 HOST_IK 并让全部上位机闭环退出。
     psi_mode=0 使用 psi_deg；psi_mode=1 在当前分支内按权重自动选择 ψ。
-    ik_method=0 解析解；ik_method=1 数值解：固件每周期迭代一小步，branch / psi 不起作用，
+    ik_method=0 解析解；ik_method=1 数值解：先规划完整关节轨迹再执行，branch / psi 不起作用，
     cost_weight 是关节权重（权重大的关节动得少）。旧固件把该字节当保留位，数值解需要新固件。
     位姿使用 ForwardKinematics 的腰部连杆坐标系，角度单位 deg。"""
     TYPE: ClassVar[int] = MsgType.SET_IK_TARGET

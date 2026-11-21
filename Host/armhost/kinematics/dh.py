@@ -59,6 +59,10 @@ BIGARM_DH = (
 )
 BIGARM_BASE_XYZ_M = (0.000558840342, -0.0208529944, 0.038)
 BIGARM_BASE_RPY_DEG = (90.0, -90.0, 0.0)
+# link8 -> TCP。TCP 原点取两根夹爪质心的中点（robot_fixed.urdf 的两个
+# prismatic joint origin），方向沿用 link8。手指开合不改变中点。
+BIGARM_TCP_XYZ_M = (-0.005310381539105, -0.001594997245, 0.13905632905)
+BIGARM_TCP_RPY_DEG = (0.0, 0.0, 0.0)
 
 
 @dataclass
@@ -68,6 +72,9 @@ class DHTable:
     # base -> DH 基座（腰部连杆坐标系）的安装位姿，与 URDF 的 joint1 origin 同口径
     base_xyz_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     base_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # DH 末端（link8）-> TCP（夹爪中心）的固定工具变换
+    tool_xyz_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    tool_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @property
     def n(self) -> int:
@@ -75,18 +82,24 @@ class DHTable:
 
     def copy(self) -> "DHTable":
         return DHTable([DHRow(*r.as_tuple()) for r in self.rows], self.source,
-                       self.base_xyz_m, self.base_rpy_deg)
+                       self.base_xyz_m, self.base_rpy_deg, self.tool_xyz_m, self.tool_rpy_deg)
 
     @property
     def base_transform(self) -> np.ndarray:
         """世界（URDF/MJCF base）到 DH 基座的 4x4 齐次变换。"""
         return transform_from_xyz_rpy_deg(*self.base_xyz_m, *self.base_rpy_deg)
 
+    @property
+    def tool_transform(self) -> np.ndarray:
+        """DH 末端（link8）到 TCP（夹爪中心）的 4x4 固定变换。"""
+        return transform_from_xyz_rpy_deg(*self.tool_xyz_m, *self.tool_rpy_deg)
+
     # ------------------------------------------------------------ 序列化
     def to_dict(self) -> dict:
         return {"convention": "modified-DH (Craig), row i = joint i, units deg/m",
                 "rows": [asdict(r) for r in self.rows],
-                "base": {"xyz_m": list(self.base_xyz_m), "rpy_deg": list(self.base_rpy_deg)}}
+                "base": {"xyz_m": list(self.base_xyz_m), "rpy_deg": list(self.base_rpy_deg)},
+                "tool": {"xyz_m": list(self.tool_xyz_m), "rpy_deg": list(self.tool_rpy_deg)}}
 
     @classmethod
     def from_dict(cls, d: dict, source: str = "文件") -> "DHTable":
@@ -99,7 +112,17 @@ class DHTable:
         rpy = tuple(float(v) for v in base.get("rpy_deg", (0.0, 0.0, 0.0)))
         if len(xyz) != 3 or len(rpy) != 3:
             raise ValueError("base.xyz_m / base.rpy_deg 必须各含 3 个数")
-        return cls(rows, source, xyz, rpy)
+        tool = d.get("tool")
+        if tool is None and [r.as_tuple() for r in rows] == [r.as_tuple() for r in BIGARM_DH]:
+            # 兼容旧版 dh.json：BigArm 配置没有 tool 字段时自动补上夹爪中心。
+            tool_xyz, tool_rpy = BIGARM_TCP_XYZ_M, BIGARM_TCP_RPY_DEG
+        else:
+            tool = tool or {}
+            tool_xyz = tuple(float(v) for v in tool.get("xyz_m", (0.0, 0.0, 0.0)))
+            tool_rpy = tuple(float(v) for v in tool.get("rpy_deg", (0.0, 0.0, 0.0)))
+        if len(tool_xyz) != 3 or len(tool_rpy) != 3:
+            raise ValueError("tool.xyz_m / tool.rpy_deg 必须各含 3 个数")
+        return cls(rows, source, xyz, rpy, tool_xyz, tool_rpy)
 
     def save_json(self, path: str | Path) -> None:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
@@ -156,7 +179,21 @@ class DHTable:
             raise ValueError(f"腰部安装位姿应有 xyz/rpy 各 3 个数，实际 {xyz} {rpy_rad}")
         # main.cpp 的 TransformFromXyzRpy 使用 rad；DHTable 对外统一存 deg。
         rpy = tuple(math.degrees(v) for v in rpy_rad)
-        return cls(rows, "ArmSim BigArm main.cpp", xyz, rpy)
+        m_tool = re.search(
+            r"c\.tcp\s*=\s*TransformFromXyzRpy\(\s*\{([^}]*)\}\s*,\s*\{([^}]*)\}\s*\)",
+            text)
+        if m_tool is None:
+            if [r.as_tuple() for r in rows] == [r.as_tuple() for r in BIGARM_DH]:
+                tool_xyz, tool_rpy = BIGARM_TCP_XYZ_M, BIGARM_TCP_RPY_DEG
+            else:
+                tool_xyz, tool_rpy = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        else:
+            tool_xyz = tuple(float(v) for v in cls._NUM.findall(m_tool.group(1).replace("f", "")))
+            tool_rpy_rad = tuple(float(v) for v in cls._NUM.findall(m_tool.group(2).replace("f", "")))
+            if len(tool_xyz) != 3 or len(tool_rpy_rad) != 3:
+                raise ValueError(f"工具变换应有 xyz/rpy 各 3 个数，实际 {tool_xyz} {tool_rpy_rad}")
+            tool_rpy = tuple(math.degrees(v) for v in tool_rpy_rad)
+        return cls(rows, "ArmSim BigArm main.cpp", xyz, rpy, tool_xyz, tool_rpy)
 
 
 def default_dh() -> DHTable:
@@ -174,7 +211,8 @@ def current_dh() -> DHTable:
     except (OSError, ValueError):
         pass
     return DHTable([DHRow(*r.as_tuple()) for r in BIGARM_DH], "内置 BigArm",
-                   BIGARM_BASE_XYZ_M, BIGARM_BASE_RPY_DEG)
+                   BIGARM_BASE_XYZ_M, BIGARM_BASE_RPY_DEG,
+                   BIGARM_TCP_XYZ_M, BIGARM_TCP_RPY_DEG)
 
 
 def transform_from_xyz_rpy_deg(x: float, y: float, z: float,
@@ -213,6 +251,11 @@ def forward_frames(table: DHTable, q_deg) -> list[np.ndarray]:
         T = T @ link_transform(row, q)
         out.append(T)
     return out
+
+
+def forward_tcp(table: DHTable, q_deg) -> np.ndarray:
+    """返回夹爪 TCP 在 DH 基座系下的位姿；位置为两根夹爪质心的中点。"""
+    return forward_frames(table, q_deg)[-1] @ table.tool_transform
 
 
 def euler_zyx_deg(R: np.ndarray, lock_eps: float = 1e-6) -> tuple[float, float, float]:

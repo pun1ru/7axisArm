@@ -24,8 +24,9 @@ from . import theme
 
 AXIS_COLORS = (QColor("#ef5350"), QColor("#66bb6a"), QColor("#42a5f5"))   # x y z
 VIEWS = {"iso": (-45.0, 25.0), "front": (-90.0, 0.0), "side": (0.0, 0.0), "top": (-90.0, 89.0)}
-WORKSPACE_COLORS = (QColor(48, 92, 138, 105), QColor(48, 126, 176, 110), QColor(55, 164, 204, 115),
-                    QColor(77, 199, 214, 120), QColor(146, 216, 158, 128), QColor(255, 210, 90, 140))
+# 可达区使用纯蓝渐变；灵活区单独用橙色叠加，避免和密度色混淆。
+WORKSPACE_COLORS = (QColor(44, 86, 130, 105), QColor(42, 111, 170, 110), QColor(45, 134, 190, 115),
+                    QColor(51, 158, 205, 120), QColor(72, 184, 218, 128), QColor(110, 210, 230, 140))
 
 
 class View3D(QWidget):
@@ -39,18 +40,24 @@ class View3D(QWidget):
         self.table = table or DHTable()
         self.q_deg = np.zeros(self.table.n)
         self.frames: list[np.ndarray] = forward_frames(self.table, self.q_deg)
+        self.tcp_frame: np.ndarray = self.frames[-1] @ self.table.tool_transform
         # 开关
         self.show_links = True
         self.show_frames = True                   # 关节坐标系总开关
         self.frame_mask = [True] * (self.table.n + 1)   # 每个坐标系单独开关：0 = 基座，i+1 = 关节 i
         self.show_axes_line = True                # 关节转轴（沿 z_i 的短线）
         self.show_labels = True
+        self.show_tcp = True
         self.show_grid = True
         self.show_world = True
         self.world_mount = True                    # 显示时叠加 URDF joint1 的腰部安装变换
         self.show_workspace = False
         self.workspace_points = np.empty((0, 3))
         self.workspace_density = np.empty(0, dtype=float)
+        self.workspace_flexible_points = np.empty((0, 3))
+        self.workspace_flexible_density = np.empty(0, dtype=float)
+        self.show_workspace_reachable = True
+        self.show_workspace_flexible = True
         self.workspace_info = ""
         self.selected: int | None = None
         self.selected_info: list[str] = []
@@ -100,7 +107,8 @@ class View3D(QWidget):
         self.selected_info = info or []
         self._dirty = True
 
-    def set_workspace(self, points_m, density=None, info: str = "") -> None:
+    def set_workspace(self, points_m, density=None, info: str = "",
+                      flexible_points_m=None, flexible_density=None) -> None:
         pts = np.asarray(points_m, dtype=float).reshape(-1, 3)
         if density is None:
             den = np.ones(len(pts), dtype=float)
@@ -110,19 +118,30 @@ class View3D(QWidget):
                 raise ValueError("工作空间点数和密度长度不一致")
         self.workspace_points = pts
         self.workspace_density = np.clip(den, 0.0, 1.0)
+        fpts = np.empty((0, 3)) if flexible_points_m is None else \
+            np.asarray(flexible_points_m, dtype=float).reshape(-1, 3)
+        fden = np.ones(len(fpts), dtype=float) if flexible_density is None else \
+            np.asarray(flexible_density, dtype=float).reshape(-1)
+        if len(fden) != len(fpts):
+            raise ValueError("灵活工作区点数和密度长度不一致")
+        self.workspace_flexible_points = fpts
+        self.workspace_flexible_density = np.clip(fden, 0.0, 1.0)
         self.workspace_info = info
         self._dirty = True
 
     def clear_workspace(self) -> None:
         self.workspace_points = np.empty((0, 3))
         self.workspace_density = np.empty(0, dtype=float)
+        self.workspace_flexible_points = np.empty((0, 3))
+        self.workspace_flexible_density = np.empty(0, dtype=float)
         self.workspace_info = ""
         self._dirty = True
 
     def fit_workspace(self) -> None:
-        if len(self.workspace_points) == 0:
+        points = self._visible_workspace_points()
+        if len(points) == 0:
             return
-        points = self._display_points(self.workspace_points)
+        points = self._display_points(points)
         lo = points.min(axis=0)
         hi = points.max(axis=0)
         self.target = 0.5 * (lo + hi)
@@ -131,24 +150,35 @@ class View3D(QWidget):
         self._dirty = True
 
     def end_pose(self) -> tuple[np.ndarray, tuple[float, float, float]]:
-        T = self.frames[-1]
+        T = self.tcp_frame
         return T[:3, 3].copy(), euler_zyx_deg(T[:3, :3])
 
     def reset_view(self, name: str = "iso") -> None:
         self.yaw, self.pitch = VIEWS.get(name, VIEWS["iso"])
         reach = sum(abs(r.a_m) + abs(r.d_m) for r in self.table.rows) or 0.3
         self.dist = max(0.25, reach * 2.6)
-        origins = np.array([T[:3, 3] for T in self.frames])
+        origins = np.array([T[:3, 3] for T in self.frames] + [self.tcp_frame[:3, 3]])
         self.target = 0.5 * (origins.min(axis=0) + origins.max(axis=0))
         self._dirty = True
 
     def _recompute(self) -> None:
         frames = forward_frames(self.table, self.q_deg)
+        tcp = frames[-1] @ self.table.tool_transform
         if self.world_mount:
             base = self.table.base_transform
             frames = [base @ T for T in frames]
+            tcp = base @ tcp
         self.frames = frames
+        self.tcp_frame = tcp
         self._dirty = True
+
+    def _visible_workspace_points(self) -> np.ndarray:
+        parts = []
+        if self.show_workspace_reachable and len(self.workspace_points):
+            parts.append(self.workspace_points)
+        if self.show_workspace_flexible and len(self.workspace_flexible_points):
+            parts.append(self.workspace_flexible_points)
+        return np.concatenate(parts) if parts else np.empty((0, 3))
 
     def _display_points(self, points: np.ndarray) -> np.ndarray:
         if not self.world_mount or len(points) == 0:
@@ -216,7 +246,7 @@ class View3D(QWidget):
                 e = np.zeros(3)
                 e[a] = 0.08
                 add((0, 0, 0), e, QPen(AXIS_COLORS[a], 2))
-        if self.show_workspace and len(self.workspace_points):
+        if self.show_workspace and len(self._visible_workspace_points()):
             self._draw_workspace(p, project)
         F = self.frames
         if self.world_mount and np.linalg.norm(F[0][:3, 3]) > 1e-6:
@@ -229,6 +259,9 @@ class View3D(QWidget):
             for i in range(len(origins) - 1):
                 if np.linalg.norm(origins[i + 1] - origins[i]) > 1e-6:
                     add(origins[i], origins[i + 1], pen)
+            tool_pen = QPen(QColor("#66bb6a"), 6, Qt.SolidLine, Qt.RoundCap)
+            if np.linalg.norm(self.tcp_frame[:3, 3] - origins[-1]) > 1e-6:
+                add(origins[-1], self.tcp_frame[:3, 3], tool_pen)
         # 关节转轴：沿 z_{i+1} 的短线，表示关节 i 绕哪根轴转
         if self.show_axes_line:
             for i in range(self.table.n):
@@ -246,6 +279,11 @@ class View3D(QWidget):
                 w = 3 if idx - 1 == self.selected else 2
                 for a in range(3):
                     add(T[:3, 3], T[:3, 3] + T[:3, a] * L, QPen(AXIS_COLORS[a], w))
+            if self.show_tcp:
+                T = self.tcp_frame
+                for a in range(3):
+                    add(T[:3, 3], T[:3, 3] + T[:3, a] * self.frame_len * 1.4,
+                        QPen(AXIS_COLORS[a], 3))
 
         # 画家算法：按线段中点深度从远到近
         mids = np.array([s[1].mean(axis=0) for s in segs])
@@ -291,7 +329,13 @@ class View3D(QWidget):
         if self.show_labels and not np.isnan(scr[0]).any():
             p.setPen(QColor(theme.MUTED))
             p.drawText(QPointF(scr[0][0] + 8, scr[0][1] + 14), "腰部 O₀" if self.world_mount else "DH 基座 O₀")
-        if self.show_workspace and len(self.workspace_points):
+        tcp_scr, _ = project(np.array([self.tcp_frame[:3, 3]]))
+        if self.show_labels and self.show_tcp and not np.isnan(tcp_scr[0]).any():
+            p.setPen(QColor("#8ee89a"))
+            p.setBrush(QColor("#2e7d32"))
+            p.drawEllipse(QPointF(*tcp_scr[0]), 5.5, 5.5)
+            p.drawText(QPointF(tcp_scr[0][0] + 9, tcp_scr[0][1] - 7), "TCP")
+        if self.show_workspace and len(self._visible_workspace_points()):
             self._draw_workspace_end(p, project)
         self._draw_hud(p)
         p.end()
@@ -299,19 +343,26 @@ class View3D(QWidget):
         self.last_render_ms = (time.perf_counter() - t0) * 1e3
 
     def _draw_workspace(self, p: QPainter, project) -> None:
-        scr, z = project(self._display_points(self.workspace_points))
-        ok = np.isfinite(scr).all(axis=1) & (z > 1e-3)
-        if not ok.any():
-            return
-        scr = scr[ok]
-        den = self.workspace_density[ok]
-        bins = np.minimum((den * len(WORKSPACE_COLORS)).astype(np.int64), len(WORKSPACE_COLORS) - 1)
-        for k, color in enumerate(WORKSPACE_COLORS):
-            pts = scr[bins == k]
-            if len(pts) == 0:
-                continue
-            p.setPen(QPen(color, 2.0))
-            p.drawPoints(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
+        if self.show_workspace_reachable and len(self.workspace_points):
+            scr, z = project(self._display_points(self.workspace_points))
+            ok = np.isfinite(scr).all(axis=1) & (z > 1e-3)
+            if ok.any():
+                scr, den = scr[ok], self.workspace_density[ok]
+                bins = np.minimum((den * len(WORKSPACE_COLORS)).astype(np.int64),
+                                  len(WORKSPACE_COLORS) - 1)
+                for k, color in enumerate(WORKSPACE_COLORS):
+                    pts = scr[bins == k]
+                    if len(pts):
+                        p.setPen(QPen(color, 2.0))
+                        p.drawPoints(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
+        if self.show_workspace_flexible and len(self.workspace_flexible_points):
+            scr, z = project(self._display_points(self.workspace_flexible_points))
+            ok = np.isfinite(scr).all(axis=1) & (z > 1e-3)
+            pts = scr[ok]
+            if len(pts):
+                # 灵活区是可达区的子集，用橙色/暖色叠加突出。
+                p.setPen(QPen(QColor(255, 183, 77, 220), 3.0))
+                p.drawPoints(QPolygonF([QPointF(float(x), float(y)) for x, y in pts]))
 
     def _draw_workspace_end(self, p: QPainter, project) -> None:
         pos, _ = self.end_pose()
@@ -325,17 +376,17 @@ class View3D(QWidget):
         p.drawLine(QPointF(P[0] - 10, P[1]), QPointF(P[0] + 10, P[1]))
         p.drawLine(QPointF(P[0], P[1] - 10), QPointF(P[0], P[1] + 10))
         p.setPen(QColor("#ffffff"))
-        p.drawText(QPointF(P[0] + 9, P[1] - 9), "当前末端")
+        p.drawText(QPointF(P[0] + 9, P[1] - 9), "当前 TCP")
 
     def _draw_hud(self, p: QPainter) -> None:
         pos, (r, pi, y) = self.end_pose()
         prefix = "世界" if self.world_mount else "DH基座"
-        lines = [f"末端({prefix}) x {pos[0] * 1e3:+8.1f}  y {pos[1] * 1e3:+8.1f}  z {pos[2] * 1e3:+8.1f} mm",
-                 f"            roll {r:+7.1f}  pitch {pi:+7.1f}  yaw {y:+7.1f} °"]
+        lines = [f"TCP({prefix}) x {pos[0] * 1e3:+8.1f}  y {pos[1] * 1e3:+8.1f}  z {pos[2] * 1e3:+8.1f} mm",
+                 f"          roll {r:+7.1f}  pitch {pi:+7.1f}  yaw {y:+7.1f} °"]
         if self.world_mount:
-            T_dh = np.linalg.inv(self.table.base_transform) @ self.frames[-1]
+            T_dh = np.linalg.inv(self.table.base_transform) @ self.tcp_frame
             p_dh = T_dh[:3, 3]
-            lines.append(f"末端(DH) x {p_dh[0] * 1e3:+8.1f}  y {p_dh[1] * 1e3:+8.1f}  z {p_dh[2] * 1e3:+8.1f} mm")
+            lines.append(f"TCP(DH) x {p_dh[0] * 1e3:+8.1f}  y {p_dh[1] * 1e3:+8.1f}  z {p_dh[2] * 1e3:+8.1f} mm")
         lines.append(f"DH：{self.table.source}")
         if self.show_workspace and self.workspace_info:
             lines.append(self.workspace_info)

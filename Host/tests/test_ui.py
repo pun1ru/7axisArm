@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from armhost.model.backend import MockBackend  # noqa: E402
 from armhost.protocol import ArmState  # noqa: E402
+from armhost.protocol.enums import IkMethod  # noqa: E402
 from armhost.ui import theme  # noqa: E402
 from armhost.ui.main_window import MonitorWindow  # noqa: E402
 
@@ -331,16 +332,25 @@ class TestMonitorWindow(unittest.TestCase):
 
         w.ik.fields["psi"].setValue(-12.5)
         w.ik.fields["x"].setValue(0.25)
+        self.assertIn("尚未发送", w.ik.target_state_label.text())
+        self.assertNotAlmostEqual(backend.device.ik_pose[0], 0.25, places=5)
+        w.ik.apply_btn.click()
         self.assertTrue(wait_until(lambda: abs(backend.device.ik_psi_deg + 12.5) < 1e-6))
         self.assertAlmostEqual(backend.device.ik_pose[0], 0.25, places=5)
         w.ik.fields["x"].setValue(0.30)
+        self.assertTrue(wait_until(lambda: w.ik.apply_btn.isEnabled()))
+        w.ik.apply_btn.click()
         self.assertTrue(wait_until(lambda: abs(backend.device.ik_pose[0] - 0.30) < 1e-6))
         self.assertTrue(wait_until(lambda: "IK 闭环" in w.ik.ik_status.text()))
 
         w.ik.auto_psi.setChecked(True)
         self.assertFalse(w.ik.fields["psi"].isEnabled())
+        self.assertTrue(wait_until(lambda: w.ik.apply_btn.isEnabled()))
+        w.ik.apply_btn.click()
         self.assertTrue(wait_until(lambda: backend.device.ik_auto_psi))
         w.ik.weight_spins[2].setValue(3.5)
+        self.assertTrue(wait_until(lambda: w.ik.apply_btn.isEnabled()))
+        w.ik.apply_btn.click()
         self.assertTrue(wait_until(lambda: abs(backend.device.ik_cost_weights[2] - 3.5) < 1e-6))
         self.assertTrue(wait_until(lambda: "自动 ψ" in w.ik.ik_status.text()))
         w.ik.auto_psi.setChecked(False)
@@ -366,6 +376,20 @@ class TestMonitorWindow(unittest.TestCase):
         widget.slider.shift_steps(-step)
         self.assertAlmostEqual(widget.value(), 179.5)
         widget.deleteLater()
+
+    def test_numeric_planning_indicator_and_time(self):
+        w = self.w
+        backend = MockBackend(rate_hz=200)
+        w._switch(backend)
+        self.assertTrue(wait_until(lambda: w.host._limits_ready))
+        backend.device.arm_state = ArmState.HOST
+        self.assertTrue(wait_until(lambda: w.ik.toggle_btn.isEnabled()))
+        w.ik.method_box.setCurrentIndex(w.ik.method_box.findData(int(IkMethod.NUMERIC)))
+        w.ik.toggle_btn.click()
+        self.assertTrue(wait_until(lambda: "计算中" in w.ik.plan_label.text(), 2.0))
+        self.assertIn("保持不动", w.ik.ik_status.text())
+        self.assertTrue(wait_until(lambda: "计算完成" in w.ik.plan_label.text(), 2.0))
+        self.assertIn("ms CPU", w.ik.plan_label.text())
 
     def _fill(self, n=2000):
         from armhost.model.state import RobotSample

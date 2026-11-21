@@ -66,7 +66,8 @@ ArmAngle ComputeArmAngle(const SrsParam &param, const FrameArray &frames);
 enum class IkStatus : uint8_t {
     Ok = 0,
     OutOfReach,      // 腕心离肩太远或太近，大小臂够不到
-    RefDegenerate    // S→W 与 z0 近似平行，ψ 无定义
+    RefDegenerate,   // S→W 与 z0 近似平行，ψ 无定义
+    Planning         // 数值解正在预先规划关节轨迹，尚未开始执行
 };
 
 enum class IkPsiMode : uint8_t {

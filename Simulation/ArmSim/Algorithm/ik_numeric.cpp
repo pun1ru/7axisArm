@@ -172,7 +172,9 @@ bool IsValidNumericIkParam(const NumericIkParam &p)
     return positive(p.damping) && positive(p.orientation_length_m) && std::isfinite(p.nullspace_gain) &&
            p.nullspace_gain >= 0.0 && positive(p.max_step_deg) && positive(p.max_pos_err_m) &&
            positive(p.max_rot_err_rad) && positive(p.weight_floor) && p.converged_pos_m >= 0.0 &&
-           p.converged_rot_rad >= 0.0 && p.max_limit_passes >= 0;
+           p.converged_rot_rad >= 0.0 && p.max_limit_passes >= 0 &&
+           positive(p.plan_cartesian_step_m) && positive(p.plan_rotation_step_rad) &&
+           p.plan_iterations_per_cycle > 0 && p.max_plan_cycles > 0;
 }
 
 Jacobian6x7 ComputeJacobian(const FrameArray &frames)

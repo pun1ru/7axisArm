@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from armhost.kinematics import (DHTable, branch_indices_deg, compute_branch, forward_frames,  # noqa: E402
-                                forward_positions_deg, sample_workspace)
+                                forward_positions_deg, forward_tcp, sample_workspace)
 from armhost.kinematics.workspace import sample_joint_configurations  # noqa: E402
 
 
@@ -20,7 +20,7 @@ class TestWorkspace(unittest.TestCase):
         q = np.array([[0.0] * 7,
                       [10.0, -20.0, 30.0, -40.0, 50.0, -60.0, 70.0],
                       [-179.0, 179.0, 0.0, 90.0, -90.0, 45.0, -45.0]])
-        ref = np.array([forward_frames(table, row)[-1][:3, 3] for row in q])
+        ref = np.array([forward_tcp(table, row)[:3, 3] for row in q])
         np.testing.assert_allclose(forward_positions_deg(table, q), ref, atol=1e-12)
 
     def test_sampling_is_deterministic_and_voxelized(self):
@@ -35,9 +35,22 @@ class TestWorkspace(unittest.TestCase):
         self.assertGreater(len(a.points_m), 0)
         self.assertLessEqual(len(a.points_m), 18_000)
         self.assertEqual(len(a.points_m), len(a.density))
+        self.assertEqual(len(a.flexible_points_m), len(a.flexible_density))
+        self.assertLessEqual(len(a.flexible_points_m), len(a.points_m))
         self.assertTrue(np.isfinite(a.points_m).all())
         self.assertAlmostEqual(float(a.density.max()), 1.0)
         self.assertGreaterEqual(a.voxel_m, 0.02)
+
+    def test_flexible_workspace_is_orientation_coverage_subset(self):
+        table = DHTable()
+        limits = ((-180.0, 180.0),) * 7
+        all_dirs = sample_workspace(table, limits, samples=20_000, voxel_m=0.03,
+                                    seed=17, flexible_min_sectors=1)
+        flexible = sample_workspace(table, limits, samples=20_000, voxel_m=0.03,
+                                    seed=17, flexible_min_sectors=3)
+        np.testing.assert_array_equal(all_dirs.points_m, flexible.points_m)
+        self.assertEqual(len(all_dirs.flexible_points_m), len(all_dirs.points_m))
+        self.assertLess(len(flexible.flexible_points_m), len(flexible.points_m))
 
     def test_invalid_limits_rejected(self):
         table = DHTable()

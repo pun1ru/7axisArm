@@ -31,7 +31,7 @@
  *   3. 单周期步长：max_step_deg 是每个关节每周期最大转角；超出时整个 Δq 等比缩小，保持方向，线性化才可信。
  *   4. 单周期误差：e 的位置部分和姿态部分各自限幅（max_pos_err_m、max_rot_err_rad），远目标走成一串小步。
  * 参考：opensource/七轴机械臂解算与控制_开源整理.md §2.4（资料 A 的加权 DLS）。 */
-/* HOST_IK 的求解方式：解析解一次给出目标关节角；数值解每周期迭代一小步 */
+/* HOST_IK 的求解方式：解析解一次给出目标关节角；数值解先预计算完整关节轨迹再执行 */
 enum class IkMethod : uint8_t {
     Analytic = 0,
     Numeric = 1
@@ -39,7 +39,7 @@ enum class IkMethod : uint8_t {
 
 struct NumericIkParam {
     double damping = 0.03;                  // λ，在 [m; L·rad] 的量纲下
-    double orientation_length_m = 0.1;      // L：姿态误差折算成位置误差的等效长度
+    double orientation_length_m = 0.05;     // L：姿态误差折算成位置误差的等效长度
     double nullspace_gain = 0.02;           // k：每周期向参考构型拉回的比例，0 = 关闭零空间项
     double max_step_deg = 0.2;              // 每关节每周期最大转角，2 ms 周期下约 100 °/s
     double max_pos_err_m = 0.01;            // 单步使用的位置误差上限
@@ -48,7 +48,10 @@ struct NumericIkParam {
     double converged_pos_m = 5e-4;          // 位置误差低于此值视为到位
     double converged_rot_rad = 2e-3;        // 姿态误差低于此值视为到位
     int max_limit_passes = 4;               // 限位重解的最大轮数
-    double max_lead_deg = 5.0;              // 指令角领先实测角的上限，由调用方（Arm）使用：跟不上时不再往前堆
+    double plan_cartesian_step_m = 0.002;   // 预规划时 TCP 直线的最大采样间距
+    double plan_rotation_step_rad = 0.01;   // 预规划时姿态插值的最大角度间距
+    int plan_iterations_per_cycle = 16;     // 先算后跑：每个控制周期最多预计算多少个 IK 步，避免阻塞控制
+    int max_plan_cycles = 50000;            // 单条数值轨迹的最大 IK 迭代次数
 };
 
 bool IsValidNumericIkParam(const NumericIkParam &param);

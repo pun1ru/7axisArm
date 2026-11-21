@@ -111,7 +111,7 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
     };
     c.joint_effort_limit = 100.0;   // URDF effort
 
-    /* 改进 DH，一行对应 joint2..joint8，末端坐标系为 {link8}，取自 mujoco/BigArm/dh_params.md */
+    /* 改进 DH，一行对应 joint2..joint8；{link8} 之后再用 c.tcp 变换到夹爪中心。 */
     c.dh = {{
         {0.0f,  0.4105f, -0.0897f,  -72.5122038f},
         {90.0f, 0.0f,     0.0f,     -90.0f},
@@ -123,6 +123,10 @@ Arm::Config MakeArmConfig(const MujocoWorld &world)
     }};
     c.direction.fill(1);
     c.zero_point_rad.fill(0.0f);
+    /* link8 -> TCP：两根夹爪质心的中点。坐标轴沿用 link8，手指开合不改变 TCP。 */
+    c.tcp = TransformFromXyzRpy(
+        {-0.005310381539105f, -0.001594997245f, 0.13905632905f},
+        {0.0f, 0.0f, 0.0f});
     c.limit = {{
         {-90.0f,   90.0f},   // J0
         {-20.0f,  175.0f},   // J1
@@ -261,8 +265,7 @@ void PrintStatus(const MujocoWorld &world, const Arm &arm)
 {
     const Arm::Observer &obs = arm.observer();
     const Arm::Output &out = arm.control().output;
-    const auto tcp =
-        world.SitePosition(ModelName(world, "dh8")).value_or(std::array<double, 3>{});
+    const auto &tcp = obs.pose.position_m;
     float tau_max = std::fabs(out.waist_nm);
 
     for (int i = 0; i < kJointCount; ++i)

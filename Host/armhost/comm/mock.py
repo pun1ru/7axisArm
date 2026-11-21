@@ -88,6 +88,11 @@ class SimDevice:
         self.ik_auto_psi = False
         self.ik_method = 0
         self.ik_cost_weights = (1.0,) * 7
+        self.ik_planning_until = 0.0
+        self.ik_plan_ms = 0.0
+        self.ik_plan_sequence = 0
+        self.ik_plan_steps = 0
+        self.ik_plan_exec_index = 0
         self.ik_pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         self.exchange_phase = ExchangePhase.PARKED
         self.exchange_difficulty = 1
@@ -264,19 +269,24 @@ class SimDevice:
                 flags |= PostureFlag.AUTO_PSI
             if self.ik_method == 1:
                 flags |= PostureFlag.NUMERIC_IK
+                if now < self.ik_planning_until:
+                    flags = PostureFlag(int(flags) | (3 << 4))
             branch = self.ik_branch
             pose = self.ik_pose
             psi = self.ik_psi_deg
         else:
             try:
-                from ..kinematics.dh import DHTable, DHRow, euler_zyx_deg, forward_frames
+                from ..kinematics.dh import DHTable, DHRow, euler_zyx_deg, forward_tcp
                 table = DHTable([DHRow(*row) for row in _DH])
-                tf = forward_frames(table, [j.q for j in self.joints])[-1]
+                tf = forward_tcp(table, [j.q for j in self.joints])
                 pose = (float(tf[0, 3]), float(tf[1, 3]), float(tf[2, 3]), *euler_zyx_deg(tf[:3, :3]))
             except Exception:
                 pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
             psi = 0.0
-        return ArmPosture(branch, flags, psi, *pose)
+        plan_units = int(round(self.ik_plan_ms * 10.0)) if self.ik_method == 1 else 0
+        exec_index = 0 if now < self.ik_planning_until else self.ik_plan_steps
+        return ArmPosture(branch, flags, psi, *pose, min(plan_units, 0xFFFF),
+                          self.ik_plan_sequence, self.ik_plan_steps, exec_index)
 
     def _tick_us(self, t: float) -> int:
         return int((t - self._t0) * 1e6) & 0xFFFFFFFF
@@ -456,6 +466,17 @@ class SimDevice:
             self.ik_auto_psi = bool(m.auto_psi)
             self.ik_method = int(m.method)
             self.ik_cost_weights = tuple(m.cost_weights)
+            if self.ik_method == 1:
+                self.ik_plan_ms = 1.7
+                self.ik_planning_until = now + 0.15
+                self.ik_plan_sequence = (self.ik_plan_sequence + 1) & 0xFFFFFFFF
+                self.ik_plan_steps = 1
+                self.ik_plan_exec_index = 0
+            else:
+                self.ik_plan_ms = 0.0
+                self.ik_planning_until = 0.0
+                self.ik_plan_steps = 0
+                self.ik_plan_exec_index = 0
             self._last_cmd = now
             return Ack(seq, m.TYPE, AckResult.OK, 0)
         if isinstance(m, ClearTorque):

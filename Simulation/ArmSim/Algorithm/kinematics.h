@@ -40,6 +40,8 @@ struct Pose {
 
 /* URDF 的 <origin xyz rpy>：R = Rz(yaw) * Ry(pitch) * Rx(roll)，rpy 单位 rad */
 Mat4 TransformFromXyzRpy(const std::array<float, 3> &xyz_m, const std::array<float, 3> &rpy_rad);
+/* 刚体齐次变换求逆：[R p; 0 1]^-1 = [R^T -R^T p; 0 1] */
+Mat4 RigidInverse(const Mat4 &T);
 
 Mat4 DhTransform(const DhParam &param, float q_deg);
 /* 第 k 个元素 = 坐标系 k+1 相对基座的位姿 T_{0,k+1}（k = 0..6），最后一个就是末端 */

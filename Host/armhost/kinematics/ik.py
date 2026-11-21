@@ -13,7 +13,7 @@ from enum import Enum
 
 import numpy as np
 
-from .dh import DHTable
+from .dh import DHTable, transform_from_xyz_rpy_deg
 
 _DEG = math.pi / 180.0
 _SINGULAR_EPS = 1e-6
@@ -37,6 +37,9 @@ class SrsParam:
     elbow_offset_m: float
     forearm_m: float
     tool_m: float
+    tool_xyz_m: tuple[float, float, float]
+    tool_rotation: tuple[tuple[float, float, float], tuple[float, float, float],
+                          tuple[float, float, float]]
     theta_offset_rad: tuple[float, ...]
 
 
@@ -92,6 +95,10 @@ def make_srs_param(table: DHTable) -> SrsParam | None:
         elbow_offset_m=table.rows[3].d_m,
         forearm_m=table.rows[4].d_m,
         tool_m=table.rows[6].d_m,
+        tool_xyz_m=table.tool_xyz_m,
+        tool_rotation=tuple(tuple(float(v) for v in row)
+                            for row in transform_from_xyz_rpy_deg(
+                                0.0, 0.0, 0.0, *table.tool_rpy_deg)[:3, :3]),
         theta_offset_rad=tuple(row.theta_offset_deg * _DEG for row in table.rows),
     )
 
@@ -170,9 +177,12 @@ def solve_ik(param: SrsParam, target: np.ndarray, branch: int, psi_deg: float) -
     if not 0 <= branch < 8 or not math.isfinite(psi_deg):
         return IkResult(IkStatus.OUT_OF_REACH)
 
-    rot = np.asarray(target, dtype=float)[:3, :3]
+    target_rot = np.asarray(target, dtype=float)[:3, :3]
     origin = np.asarray(target, dtype=float)[:3, 3]
-    wrist = origin - rot[:, 2] * param.tool_m
+    tool_rot = np.asarray(param.tool_rotation, dtype=float)
+    rot = target_rot @ tool_rot.T
+    link_origin = origin - rot @ np.asarray(param.tool_xyz_m, dtype=float)
+    wrist = link_origin - rot[:, 2] * param.tool_m
     p = wrist - np.asarray(param.shoulder_m, dtype=float)
     length = float(np.linalg.norm(p))
     d3, d4, d5 = param.upper_arm_m, param.elbow_offset_m, param.forearm_m

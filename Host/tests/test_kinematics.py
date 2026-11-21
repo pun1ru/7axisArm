@@ -11,8 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np  # noqa: E402
 
 from armhost.kinematics import (ARMSIM_MAIN, BIGARM_BASE_RPY_DEG, BIGARM_BASE_XYZ_M, BIGARM_DH,  # noqa: E402
-                                BUILTIN_DH, FIRMWARE_MODULE_INIT, DHRow, DHTable, current_dh,
-                                default_dh, euler_zyx_deg, forward_frames, link_transform)
+                                BIGARM_TCP_XYZ_M, BUILTIN_DH, FIRMWARE_MODULE_INIT, DHRow, DHTable,
+                                current_dh, default_dh, euler_zyx_deg, forward_frames, forward_tcp,
+                                link_transform)
 
 
 class TestDH(unittest.TestCase):
@@ -44,6 +45,8 @@ class TestDH(unittest.TestCase):
                          "main.cpp 的 DH 改了，同步 armhost/kinematics/dh.py 的 BIGARM_DH")
         np.testing.assert_allclose(t.base_xyz_m, BIGARM_BASE_XYZ_M, atol=1e-12)
         np.testing.assert_allclose(t.base_rpy_deg, BIGARM_BASE_RPY_DEG, atol=1e-6)
+        np.testing.assert_allclose(t.tool_xyz_m, BIGARM_TCP_XYZ_M, atol=1e-12)
+        np.testing.assert_allclose(t.tool_rpy_deg, 0.0, atol=1e-12)
         self.assertEqual(t.source, "ArmSim BigArm main.cpp")
 
         expected_world_mm = np.array([
@@ -60,6 +63,8 @@ class TestDH(unittest.TestCase):
         world_mm = np.array([(t.base_transform @ f)[:3, 3] * 1000.0 for f in frames])
         np.testing.assert_allclose(world_mm, expected_world_mm, atol=1e-4)
         self.assertEqual(current_dh().source, t.source)
+        tcp_world_mm = (t.base_transform @ forward_tcp(t, [0.0] * t.n))[:3, 3] * 1000.0
+        np.testing.assert_allclose(tcp_world_mm, (-513.652049, 82.281939, 410.685698), atol=1e-4)
 
     def test_zero_pose_matches_dh_params_md(self):
         """dh_params.md 7.3：理想版 O_1=O_2 在 +62.6 mm，O_3=O_4 在 +210.6 mm，O_5=O_6=O_7 在 +310.6 mm（相对 O_0）
@@ -108,16 +113,21 @@ class TestDH(unittest.TestCase):
         t.rows[3].d_m = 0.123
         t.base_xyz_m = (0.001, -0.002, 0.038)
         t.base_rpy_deg = (90.0, -90.0, 0.0)
+        t.tool_xyz_m = (-0.005, -0.002, 0.139)
+        t.tool_rpy_deg = (1.0, 2.0, 3.0)
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "dh.json"
             t.save_json(p)
             raw = json.loads(p.read_text(encoding="utf-8"))
             self.assertIn("rows", raw)
             self.assertEqual(raw["base"]["xyz_m"], list(t.base_xyz_m))
+            self.assertEqual(raw["tool"]["xyz_m"], list(t.tool_xyz_m))
             loaded = DHTable.load_json(p)
             self.assertEqual(loaded.rows[3].d_m, 0.123)
             self.assertEqual(loaded.base_xyz_m, t.base_xyz_m)
             self.assertEqual(loaded.base_rpy_deg, t.base_rpy_deg)
+            self.assertEqual(loaded.tool_xyz_m, t.tool_xyz_m)
+            self.assertEqual(loaded.tool_rpy_deg, t.tool_rpy_deg)
 
 
 if __name__ == "__main__":

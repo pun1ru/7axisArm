@@ -3,7 +3,7 @@
 import unittest
 
 from armhost.kinematics import (DHTable, DHRow, IkStatus, compute_arm_angle, compute_branch,
-                                euler_zyx_deg, feasible_psi_intervals, forward_frames,
+                                euler_zyx_deg, feasible_psi_intervals, forward_frames, forward_tcp,
                                 is_psi_feasible, make_srs_param, solve_ik,
                                 transform_from_xyz_rpy)
 
@@ -34,6 +34,16 @@ class TestIkPreview(unittest.TestCase):
             self.assertAlmostEqual((actual - expected + 180.0) % 360.0 - 180.0, 0.0, places=6)
         self.assertAlmostEqual(compute_arm_angle(self.param, forward_frames(self.dh, result.q_deg)),
                                self.psi, places=6)
+
+    def test_tcp_offset_is_removed_before_srs_wrist_solution(self):
+        self.dh.tool_xyz_m = (-0.005310381539105, -0.001594997245, 0.13905632905)
+        self.dh.tool_rpy_deg = (3.0, -4.0, 5.0)
+        param = make_srs_param(self.dh)
+        target = forward_tcp(self.dh, self.q)
+        result = solve_ik(param, target, self.branch, self.psi)
+        self.assertEqual(result.status, IkStatus.OK)
+        for actual, expected in zip(result.q_deg, self.q):
+            self.assertAlmostEqual((actual - expected + 180.0) % 360.0 - 180.0, 0.0, places=6)
 
     def test_pose_transform_round_trip(self):
         pose = self.target[:3, 3]

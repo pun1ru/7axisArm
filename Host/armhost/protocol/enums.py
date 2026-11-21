@@ -15,7 +15,7 @@ class MsgType(IntEnum):
     JOINT_STATE = 0x10        # mcu -> host 周期
     SYSTEM_STATUS = 0x11      # mcu -> host 周期
     EVENT = 0x12              # mcu -> host 事件
-    ARM_POSTURE = 0x13        # mcu -> host 周期，分支 / 臂角 / 末端位姿
+    ARM_POSTURE = 0x13        # mcu -> host 周期，分支 / 臂角 / TCP 位姿
     # 0x20~0x2F 控制
     SET_JOINT_TORQUE = 0x20   # host -> mcu
     CLEAR_TORQUE = 0x21       # host -> mcu
@@ -106,7 +106,7 @@ class HostIkAction(IntEnum):
 class IkMethod(IntEnum):
     """SET_IK_TARGET 的求解方式"""
     ANALYTIC = 0              # 解析解：一次算出目标关节角，臂角 ψ 由上位机给定或自动选择
-    NUMERIC = 1               # 数值解：固件每周期迭代一小步（加权 DLS + 零空间 + 限位/步长约束）
+    NUMERIC = 1               # 数值解：先预计算完整关节轨迹，完成后再逐周期执行
 
 
 class PostureFlag(IntFlag):
@@ -118,7 +118,7 @@ class PostureFlag(IntFlag):
     IK_ACTIVE = 0x08          # 当前处于 HOST_IK
     AUTO_PSI = 0x40           # 当前 HOST_IK 由固件自动选择 ψ
     NUMERIC_IK = 0x80         # 当前 HOST_IK 使用数值解
-    # bit4~5: 最近一次 IK 状态 0 OK / 1 OutOfReach / 2 RefDegenerate
+    # bit4~5: IK 状态 0 OK / 1 OutOfReach / 2 RefDegenerate / 3 Planning
 
 
 class ExchangeAction(IntEnum):
