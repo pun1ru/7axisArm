@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QSlider, QVBoxLayout, QWidget)
 
 from ..protocol.enums import ArmState, JointFlag
@@ -39,7 +39,16 @@ class HostPanel(QWidget):
 
         self.spins: list[QDoubleSpinBox] = []
         self.sliders: list[QSlider] = []
+        self.current_labels: list[QLabel] = []
+        self.read_joint_buttons: list[QPushButton] = []
+        self.set_target_buttons: list[QPushButton] = []
+        self.enter_loop_buttons: list[QPushButton] = []
+        self.exit_loop_buttons: list[QPushButton] = []
         grid = QGridLayout()
+        for column, title in enumerate((
+                "关节", "目标滑条", "目标角度", "当前角度",
+                "读取角度", "设置目标角度", "进入闭环", "退出闭环")):
+            grid.addWidget(QLabel(title), 0, column)
         for i in range(joint_count):
             spin = QDoubleSpinBox()
             spin.setDecimals(2)
@@ -54,32 +63,48 @@ class HostPanel(QWidget):
             slider.setEnabled(False)
             slider.valueChanged.connect(lambda value, joint=i: self._on_slider_changed(joint, value))
             spin.valueChanged.connect(lambda value, joint=i: self._on_spin_changed(joint, value))
-            grid.addWidget(QLabel(f"J{i}"), i, 0)
-            grid.addWidget(slider, i, 1)
-            grid.addWidget(spin, i, 2)
+            current_label = QLabel("--")
+            current_label.setMinimumWidth(70)
+            current_label.setEnabled(False)
+            read_button = QPushButton("读取角度")
+            set_target_button = QPushButton("设置目标角度")
+            enter_loop_button = QPushButton("进入闭环")
+            exit_loop_button = QPushButton("退出闭环")
+            read_button.setToolTip("把该关节当前实测角度载入目标输入框，不改变固件目标")
+            set_target_button.setToolTip("发送输入框中的目标角，并保持该关节当前开/闭环状态")
+            enter_loop_button.setToolTip("用输入框中的目标角让该关节投入角度闭环")
+            exit_loop_button.setToolTip("让该关节退出角度闭环，保留当前输入框中的目标角")
+            read_button.clicked.connect(lambda _=False, joint=i: self.read_joint_angle(joint))
+            set_target_button.clicked.connect(lambda _=False, joint=i: self.set_joint_target(joint))
+            enter_loop_button.clicked.connect(lambda _=False, joint=i: self.set_joint_loop(joint, True))
+            exit_loop_button.clicked.connect(lambda _=False, joint=i: self.set_joint_loop(joint, False))
+            grid.addWidget(QLabel(f"J{i}"), i + 1, 0)
+            grid.addWidget(slider, i + 1, 1)
+            grid.addWidget(spin, i + 1, 2)
+            grid.addWidget(current_label, i + 1, 3)
+            grid.addWidget(read_button, i + 1, 4)
+            grid.addWidget(set_target_button, i + 1, 5)
+            grid.addWidget(enter_loop_button, i + 1, 6)
+            grid.addWidget(exit_loop_button, i + 1, 7)
             self.spins.append(spin)
             self.sliders.append(slider)
+            self.current_labels.append(current_label)
+            self.read_joint_buttons.append(read_button)
+            self.set_target_buttons.append(set_target_button)
+            self.enter_loop_buttons.append(enter_loop_button)
+            self.exit_loop_buttons.append(exit_loop_button)
 
-        self.joint_combo = QComboBox()
-        for i in range(joint_count):
-            self.joint_combo.addItem(f"J{i}", i)
         self.read_btn = QPushButton("读取限位")
         self.current_btn = QPushButton("载入当前角度")
         self.mode_btn = QPushButton("进入关节角闭环")
         self.mode_btn.setCheckable(True)
         self.mode_btn.setToolTip("一次性载入当前 7 轴角度并全部投入闭环；单独拖动滑条也会直接闭环对应关节")
         self.resend_btn = QPushButton("重发全部 7 轴")
-        self.send_closed_btn = QPushButton("发送并闭环")
-        self.send_open_btn = QPushButton("仅发送目标")
         self.stop_btn = QPushButton("全部退出闭环")
-        self.send_closed_btn.setToolTip("只更新选中关节的目标，并让该关节投入角度闭环")
-        self.send_open_btn.setToolTip("只更新选中关节的目标；该关节输出零力矩，其他关节状态不变")
         self.read_btn.clicked.connect(self.request_limits)
         self.current_btn.clicked.connect(lambda: self.load_current(queue=self._mode_active))
         self.mode_btn.toggled.connect(self._on_mode_toggled)
         self.resend_btn.clicked.connect(self.resend_all)
-        self.send_closed_btn.clicked.connect(lambda _=False: self.send_target(True))
-        self.send_open_btn.clicked.connect(lambda _=False: self.send_target(False))
         self.stop_btn.clicked.connect(self.stop_loops)
 
         buttons = QHBoxLayout()
@@ -91,15 +116,8 @@ class HostPanel(QWidget):
         mode_row.addWidget(self.resend_btn)
         mode_row.addWidget(self.stop_btn)
         mode_row.addStretch(1)
-        send_row = QHBoxLayout()
-        send_row.addWidget(QLabel("发送关节"))
-        send_row.addWidget(self.joint_combo)
-        send_row.addWidget(self.send_closed_btn)
-        send_row.addWidget(self.send_open_btn)
-        send_row.addStretch(1)
-        note = QLabel("拖动滑条会直接向对应关节发送闭环目标，不需要先进入模式。"
-                      "“进入关节角闭环”会载入当前角度并把 7 轴一次性全部投入闭环。"
-                      "下方单关节按钮用于调试，未选中的关节保持原目标和原闭环状态。"
+        note = QLabel("逐关节流程：读取角度 → 修改目标角度 → 设置目标角度 → 进入闭环；"
+                      "退出闭环后该关节只保留重力前馈。滑条和数值框只编辑目标，不会隐式进入闭环。"
                       "目标以多圈角发送，必须位于当前圈锁存的固件限位内；拨杆左上 + 右下时才接受。")
         note.setObjectName("title")
         note.setWordWrap(True)
@@ -108,7 +126,6 @@ class HostPanel(QWidget):
         lay.addLayout(buttons)
         lay.addLayout(mode_row)
         lay.addLayout(grid)
-        lay.addLayout(send_row)
         lay.addWidget(note)
         lay.addStretch(1)
 
@@ -133,6 +150,9 @@ class HostPanel(QWidget):
                 spin.setEnabled(False)
             for slider in self.sliders:
                 slider.setEnabled(False)
+            for label in self.current_labels:
+                label.setEnabled(False)
+                label.setText("--")
             self.state_label.setText("未连接")
         else:
             self._next_limits_try = 0.0
@@ -163,13 +183,66 @@ class HostPanel(QWidget):
         self._updating = True
         try:
             self._refresh_spin_ranges()
-            for joint, (spin, joint_state) in enumerate(zip(self.spins, sample.joints)):
-                spin.setValue(float(joint_state.angle_deg))
-                self.sliders[joint].setValue(round(spin.value() * 10.0))
+            for joint, joint_state in enumerate(sample.joints):
+                self._load_joint_angle(joint, float(joint_state.angle_deg))
         finally:
             self._updating = False
         if queue and self._mode_active:
             self._queue_all_targets()
+
+    def _load_joint_angle(self, joint: int, angle_deg: float) -> None:
+        spin = self.spins[joint]
+        spin.setValue(angle_deg)
+        self.sliders[joint].setValue(round(spin.value() * 10.0))
+
+    def read_joint_angle(self, joint: int) -> None:
+        sample = self._last_sample
+        if sample is None or joint >= len(sample.joints):
+            self._set_feedback("还没有收到该关节的实测角度", 3.0)
+            return
+        self._updating = True
+        try:
+            self._refresh_spin_ranges()
+            self._load_joint_angle(joint, float(sample.joints[joint].angle_deg))
+        finally:
+            self._updating = False
+        self._set_feedback(f"J{joint} 当前角度已读取到目标输入框")
+
+    def _joint_is_closed(self, joint: int) -> bool:
+        sample = self._last_sample
+        return bool(
+            sample is not None
+            and joint < len(sample.joints)
+            and sample.joints[joint].joint_flags & JointFlag.HOST_CLOSED_LOOP)
+
+    def set_joint_target(self, joint: int) -> None:
+        closed_loop = self._joint_is_closed(joint)
+        self._send_joint_target(joint, closed_loop, "set")
+
+    def set_joint_loop(self, joint: int, closed_loop: bool) -> None:
+        self._send_joint_target(joint, closed_loop, "close" if closed_loop else "open")
+
+    def _send_joint_target(self, joint: int, closed_loop: bool, kind: str) -> None:
+        if not self._is_host_state():
+            QMessageBox.warning(self, "Host 目标", "当前不是 Host 模式，请先把拨杆切到左上 + 右下")
+            return
+        if not self._limits_ready:
+            QMessageBox.warning(self, "Host 目标", "固件限位尚未读取，不能发送目标")
+            return
+        if self._send_future is not None:
+            self._set_feedback("上一条关节命令仍在等待固件确认", 3.0)
+            return
+        self._send_future = self._start_target(joint, self.spins[joint].value(), closed_loop, kind)
+        if self._send_future is None:
+            return
+        action = {
+            "set": "设置目标",
+            "close": "进入闭环",
+            "open": "退出闭环",
+        }[kind]
+        self._set_feedback(f"J{joint} {action}已发送，等待固件确认…")
+        self._send_timer.start()
+        self._update_buttons()
 
     def resend_all(self) -> None:
         if not self._mode_active:
@@ -246,7 +319,8 @@ class HostPanel(QWidget):
             self.spins[joint].setValue(value / 10.0)
         finally:
             self._updating = False
-        self._queue_joint(joint)
+        if self._mode_active:
+            self._queue_joint(joint)
 
     def _queue_joint(self, joint: int) -> None:
         if not self._connected or not self._limits_ready or not self._is_host_state():
@@ -266,24 +340,6 @@ class HostPanel(QWidget):
             self._pump_send_queue()
         else:
             self._send_timer.start()
-
-    def send_target(self, closed_loop: bool) -> None:
-        if not self._is_host_state():
-            QMessageBox.warning(self, "Host 目标", "当前不是 Host 模式，请先把拨杆切到左上 + 右下")
-            return
-        if not self._limits_ready:
-            QMessageBox.warning(self, "Host 目标", "固件限位尚未读取，不能发送目标")
-            return
-        if self._mode_active:
-            self._set_feedback("关节角闭环模式下请直接拖动滑条，或先退出该模式")
-            return
-        joint = int(self.joint_combo.currentData())
-        self._send_future = self._start_target(joint, self.spins[joint].value(), closed_loop)
-        if self._send_future is None:
-            return
-        action = "闭环目标" if closed_loop else "不闭环目标"
-        self._set_feedback(f"J{joint} {action}已发送，等待固件确认…")
-        self._update_buttons()
 
     def stop_loops(self) -> None:
         if not self._is_host_state():
@@ -347,7 +403,7 @@ class HostPanel(QWidget):
         try:
             future.result()
         except Exception as exc:
-            if kind == "target" and self._mode_active:
+            if kind in ("target", "direct") and self._mode_active:
                 self._deactivate_mode()
                 if self._is_host_state():
                     self.stop_loops()
@@ -356,6 +412,12 @@ class HostPanel(QWidget):
         else:
             if kind == "stop":
                 self._set_feedback("全部关节已退出闭环")
+            elif kind == "set":
+                self._set_feedback(f"J{joint} 目标已设置，开/闭环状态保持不变")
+            elif kind == "close":
+                self._set_feedback(f"J{joint} 已进入角度闭环")
+            elif kind == "open":
+                self._set_feedback(f"J{joint} 已退出角度闭环")
             elif kind == "target" and not self._mode_active:
                 self._set_feedback("固件已确认目标")
         if self._stop_after_send and self._send_future is None:
@@ -418,11 +480,18 @@ class HostPanel(QWidget):
         can_mode = self._connected and self._limits_ready and host and not busy
         self.mode_btn.setEnabled(self._mode_active or can_mode)
         self.resend_btn.setEnabled(self._mode_active and host and not busy)
-        self.send_closed_btn.setEnabled(can_mode and not self._mode_active)
-        self.send_open_btn.setEnabled(can_mode and not self._mode_active)
         self.stop_btn.setEnabled(self._connected and self._is_host_mode() and not busy)
         self.read_btn.setEnabled(self._connected and self._limits_future is None)
         self.current_btn.setEnabled(self._connected and self._last_sample is not None)
+        has_sample = self._connected and self._last_sample is not None
+        can_joint = can_mode and not self._mode_active
+        for joint in range(self.joint_count):
+            self.read_joint_buttons[joint].setEnabled(has_sample)
+            self.set_target_buttons[joint].setEnabled(can_joint)
+            self.enter_loop_buttons[joint].setEnabled(
+                can_joint and not self._joint_is_closed(joint))
+            self.exit_loop_buttons[joint].setEnabled(
+                can_joint and self._joint_is_closed(joint))
 
     def _poll_futures(self) -> None:
         now = time.monotonic()
@@ -474,6 +543,18 @@ class HostPanel(QWidget):
     def tick(self, sample) -> None:
         previous = self._last_sample
         self._last_sample = sample
+        if sample is not None:
+            for joint, label in enumerate(self.current_labels):
+                if joint < len(sample.joints):
+                    label.setText(f"{sample.joints[joint].angle_deg:+.3f}°")
+                    label.setEnabled(True)
+                else:
+                    label.setText("--")
+                    label.setEnabled(False)
+        else:
+            for label in self.current_labels:
+                label.setText("--")
+                label.setEnabled(False)
         if self._limits_ready and sample is not None and sample.arm_state == ArmState.HOST \
                 and (previous is None or previous.arm_state != ArmState.HOST):
             self.load_current()

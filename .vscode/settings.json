@@ -1,15 +1,13 @@
 {
   "clangd.path": "/usr/bin/clangd",
   "clangd.arguments": [
-    "--background-index",
-    "--clang-tidy=false",
-    "--header-insertion=never",
-    "--completion-style=detailed",
-    "--function-arg-placeholders=false"
+    "--compile-commands-dir=${workspaceFolder}/Real/DIYcontroller/MDK-ARM/out/dm_mcV610/dm_mcV610"
   ],
   "clangd.onConfigChanged": "restart",
   "C_Cpp.intelliSenseEngine": "disabled",
   "files.associations": {
     "*.h": "cpp"
-  }
+  },
+  "debug.hideSlowPreLaunchWarning": true,
+  "debug.showInStatusBar": "never"
 }

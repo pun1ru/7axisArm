@@ -213,7 +213,7 @@ class TestMonitorWindow(unittest.TestCase):
         (ROOT / "logs").mkdir(exist_ok=True)
         w.grab().save(str(ROOT / "logs" / "ui_smoke.png"))
 
-    def test_host_panel_reads_limits_and_sends_target(self):
+    def test_host_panel_has_explicit_per_joint_controls(self):
         w = self.w
         backend = MockBackend(rate_hz=200)
         w._switch(backend)
@@ -221,23 +221,33 @@ class TestMonitorWindow(unittest.TestCase):
         self.assertTrue(w.host.spins[0].isEnabled())
         self.assertEqual(w.host.spins[0].minimum(), -90.0)
         self.assertEqual(w.host.spins[0].maximum(), 90.0)
+        self.assertEqual([b.text() for b in w.host.read_joint_buttons], ["读取角度"] * 7)
+        self.assertEqual([b.text() for b in w.host.set_target_buttons], ["设置目标角度"] * 7)
+        self.assertEqual([b.text() for b in w.host.enter_loop_buttons], ["进入闭环"] * 7)
+        self.assertEqual([b.text() for b in w.host.exit_loop_buttons], ["退出闭环"] * 7)
         backend.device.arm_state = ArmState.HOST
         pump(0.4)
-        self.assertTrue(wait_until(lambda: w.host.send_closed_btn.isEnabled()))
+        self.assertTrue(wait_until(lambda: w.host.set_target_buttons[0].isEnabled()))
 
-        w.host.joint_combo.setCurrentIndex(0)
         w.host.spins[0].setValue(12.0)
-        w.host.send_closed_btn.click()
-        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 1))
+        w.host.set_target_buttons[0].click()
+        self.assertTrue(wait_until(lambda: backend.device.host_target_valid_mask == 1))
+        self.assertEqual(backend.device.host_closed_loop_mask, 0)
         self.assertEqual(backend.device.host_target_valid_mask, 1)
         self.assertEqual(backend.device.joints[0].host_target, 12.0)
+        self.assertTrue(wait_until(lambda: w.host.enter_loop_buttons[0].isEnabled()))
+        w.host.enter_loop_buttons[0].click()
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 1))
+        self.assertTrue(wait_until(lambda: w.host.exit_loop_buttons[0].isEnabled()))
+        w.host.exit_loop_buttons[0].click()
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
+        self.assertEqual(backend.device.joints[0].host_target, 12.0)
 
-        w.host.joint_combo.setCurrentIndex(1)
         w.host.spins[1].setValue(20.0)
-        self.assertTrue(wait_until(lambda: w.host.send_open_btn.isEnabled()))
-        w.host.send_open_btn.click()
+        self.assertTrue(wait_until(lambda: w.host.set_target_buttons[1].isEnabled()))
+        w.host.set_target_buttons[1].click()
         self.assertTrue(wait_until(lambda: backend.device.joints[1].host_target == 20.0))
-        self.assertEqual(backend.device.host_closed_loop_mask, 1)   # 只动 J0 闭环
+        self.assertEqual(backend.device.host_closed_loop_mask, 0)
         self.assertEqual(backend.device.joints[6].host_target, 0.0) # 未发送关节不变
 
         self.assertTrue(wait_until(lambda: w.host.stop_btn.isEnabled()))
@@ -272,7 +282,7 @@ class TestMonitorWindow(unittest.TestCase):
         self.assertFalse(w.host.mode_btn.isChecked())
         self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 0))
 
-    def test_joint_slider_sends_directly_without_entering_mode(self):
+    def test_joint_slider_only_edits_target_until_explicitly_sent(self):
         w = self.w
         backend = MockBackend(rate_hz=200)
         w._switch(backend)
@@ -282,9 +292,18 @@ class TestMonitorWindow(unittest.TestCase):
         self.assertFalse(w.host.mode_btn.isChecked())
 
         w.host.sliders[0].setValue(85)
-        self.assertTrue(wait_until(lambda: abs(backend.device.joints[0].host_target - 8.5) < 1e-6))
-        self.assertEqual(backend.device.host_closed_loop_mask, 1)
+        pump(0.2)
+        self.assertAlmostEqual(w.host.spins[0].value(), 8.5)
+        self.assertEqual(backend.device.joints[0].host_target, 0.0)
+        self.assertEqual(backend.device.host_closed_loop_mask, 0)
         self.assertFalse(w.host.mode_btn.isChecked())
+
+        w.host.set_target_buttons[0].click()
+        self.assertTrue(wait_until(lambda: abs(backend.device.joints[0].host_target - 8.5) < 1e-6))
+        self.assertEqual(backend.device.host_closed_loop_mask, 0)
+        self.assertTrue(wait_until(lambda: w.host.enter_loop_buttons[0].isEnabled()))
+        w.host.enter_loop_buttons[0].click()
+        self.assertTrue(wait_until(lambda: backend.device.host_closed_loop_mask == 1))
 
         self.assertTrue(wait_until(lambda: w.host.stop_btn.isEnabled()))
         w.host.stop_btn.click()
@@ -481,6 +500,9 @@ class TestHostMultiTurnPanel(unittest.TestCase):
         self.assertAlmostEqual(panel.spins[0].minimum(), 180.0)
         self.assertAlmostEqual(panel.spins[0].maximum(), 540.0)
         panel.load_current()
+        self.assertAlmostEqual(panel.spins[0].value(), 190.0)
+        panel.spins[0].setValue(200.0)
+        panel.read_joint_angle(0)
         self.assertAlmostEqual(panel.spins[0].value(), 190.0)
         panel.deleteLater()
 

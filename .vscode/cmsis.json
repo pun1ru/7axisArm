@@ -1,0 +1,9 @@
+{
+    "targetSet": {
+        "Real/DIYcontroller/MDK-ARM/dm_mcV610": {
+            "activeTargetType": "dm_mcV610"
+        }
+    },
+    "activeSolution": "../Real/DIYcontroller/MDK-ARM/dm_mcV610.csolution.yml",
+    "activeTarget": "dm_mcV610"
+}
