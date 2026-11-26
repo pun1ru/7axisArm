@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (QComboBox, QDockWidget, QLabel, QMainWindow, QMes
 
 from ..comm import FaultConfig, list_serial_ports
 from ..controller import MonitorController
+from ..kinematics import current_dh, default_dh
 from ..model import channel_stats, timing_stats
 from ..model.backend import MockBackend, ReplayBackend, SerialBackend
 from ..model.sim import SimBackend
@@ -32,6 +33,9 @@ SRC_MOCK = "mock"
 SRC_MOCK_NOISY = "mock_noisy"
 SRC_SIM = "sim"
 SRC_SERIAL = "serial"
+DH_EMBEDDED = "embedded"
+DH_BIGARM = "bigarm"
+DH_CUSTOM = "custom"
 BAUDS = (115200, 460800, 921600, 1000000, 2000000)
 
 
@@ -45,6 +49,12 @@ class MonitorWindow(QMainWindow):
         self._fit_to_screen(1500, 920)
         self.ctrl = ctrl or MonitorController(joint_count=joint_count)
         self._hex_last_ns = 0
+        self._dh_presets = {
+            DH_EMBEDDED: default_dh().copy(),
+            DH_BIGARM: current_dh().copy(),
+        }
+        self._pose_fk_dh = self._dh_presets[DH_EMBEDDED].copy()
+        self._custom_dh = None
 
         # ---------------------------------------------------------- 工具栏
         tb = QToolBar("连接")
@@ -81,6 +91,14 @@ class MonitorWindow(QMainWindow):
         self.conn_btn.toggled.connect(self._on_connect)
         tb.addWidget(self.conn_btn)
         tb.addSeparator()
+        tb.addWidget(QLabel(" DH 表 "))
+        self.dh_combo = QComboBox()
+        self.dh_combo.setMinimumWidth(150)
+        self.dh_combo.addItem("嵌入式 DH", DH_EMBEDDED)
+        self.dh_combo.addItem("BigArm DH", DH_BIGARM)
+        self.dh_combo.setToolTip("切换三维位姿、关节位姿、工作空间和重力拟合使用的 DH 表")
+        tb.addWidget(self.dh_combo)
+        tb.addSeparator()
         self.estop_btn = QPushButton("急 停")
         self.estop_btn.setObjectName("estop")
         self.estop_btn.setToolTip("锁存急停：清除并拒绝上位机力矩设定（Ctrl+E）。遥控保护档仍是最高优先级")
@@ -96,7 +114,9 @@ class MonitorWindow(QMainWindow):
         i = self.scope.win_combo.findData(int(self.cfg["ui"]["default_window_s"]))
         if i >= 0:
             self.scope.win_combo.setCurrentIndex(i)
-        self.pose = PosePanel(self.ctrl.latest, self._read_device_dh, fps=int(self.cfg["ui"]["view3d_fps"]),
+        self.pose = PosePanel(self.ctrl.latest, self._read_device_dh,
+                              table=self._pose_fk_dh.copy(),
+                              fps=int(self.cfg["ui"]["view3d_fps"]),
                               read_device_limits=self.ctrl.read_limits)
         self.host = HostPanel(self.ctrl, joint_count)
         self.ik = IkPanel(self.ctrl)
@@ -108,7 +128,10 @@ class MonitorWindow(QMainWindow):
         self.center_tabs.addTab(self.scope, "实时波形")
         self.center_tabs.addTab(self.pose, "三维姿态")
         self.center_tabs.addTab(self.mujoco_tabs, "MuJoCo 仿真")
-        self.table = JointTable(joint_count)
+        # 固件源码在运行时不会变化，启动时读取一次，避免每个 UI 刷新周期重复解析 C 文件。
+        self.table = JointTable(joint_count, table_provider=lambda: self._pose_fk_dh)
+        self.pose.table_applied.connect(self._on_pose_table_applied)
+        self.dh_combo.currentIndexChanged.connect(self._on_dh_preset_changed)
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.center_tabs)
         split.addWidget(self.table)
@@ -191,7 +214,8 @@ class MonitorWindow(QMainWindow):
         self.resizeDocks([self.tool_dock], [min(260, max(120, int(h * 0.26)))], Qt.Vertical)
         self.resizeDocks([self.status_dock], [min(330, max(140, int(w * 0.22)))], Qt.Horizontal)
         total = self.center_split.height()
-        want = min(self.table.rowCount() * 22 + 46, int(total * 0.3))
+        # J0～J6 后新增实际/目标位姿两行；常规窗口默认完整显示 9 行，小屏仍允许滚动。
+        want = min(self.table.rowCount() * 22 + 46, int(total * 0.4))
         self.center_split.setSizes([max(1, total - want), max(1, want)])
 
     def _fit_to_screen(self, w: int, h: int) -> None:
@@ -315,6 +339,31 @@ class MonitorWindow(QMainWindow):
         link = getattr(self.ctrl.backend, "link", None)
         if link is not None:
             link.hexlog.enabled = on
+
+    # ================================================================ DH 表
+    def _on_dh_preset_changed(self, _index: int = 0) -> None:
+        key = self.dh_combo.currentData()
+        if key in (DH_EMBEDDED, DH_BIGARM):
+            self.pose.set_table(self._dh_presets[key].copy())
+
+    @staticmethod
+    def _same_dh(a, b) -> bool:
+        return ([r.as_tuple() for r in a.rows] == [r.as_tuple() for r in b.rows]
+                and a.base_xyz_m == b.base_xyz_m and a.base_rpy_deg == b.base_rpy_deg
+                and a.tool_xyz_m == b.tool_xyz_m and a.tool_rpy_deg == b.tool_rpy_deg)
+
+    def _on_pose_table_applied(self, table) -> None:
+        self._pose_fk_dh = table.copy()
+        match = next((key for key, preset in self._dh_presets.items()
+                      if self._same_dh(table, preset)), None)
+        if match is None:
+            match = DH_CUSTOM
+            self._custom_dh = table.copy()
+            if self.dh_combo.findData(DH_CUSTOM) < 0:
+                self.dh_combo.addItem("自定义 DH", DH_CUSTOM)
+        self.dh_combo.blockSignals(True)
+        self.dh_combo.setCurrentIndex(self.dh_combo.findData(match))
+        self.dh_combo.blockSignals(False)
 
     def _read_device_dh(self):
         b = self.ctrl.backend

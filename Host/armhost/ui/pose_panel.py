@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComb
                                QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider, QSplitter,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..kinematics import DHRow, DHTable, current_dh
+from ..kinematics import DHRow, DHTable, current_dh, default_dh
 from ..model import RobotSample
 from ..protocol.enums import MotorStatus
 from .layout_util import scrollable
@@ -198,11 +198,12 @@ def load_startup_dh() -> DHTable:
             return DHTable.load_json(DH_FILE)
         except (OSError, ValueError, KeyError):
             pass
-    return current_dh()
+    return default_dh()
 
 
 class PosePanel(QWidget):
     SRC_LIVE, SRC_MANUAL = "live", "manual"
+    table_applied = Signal(object)       # DHTable
 
     def __init__(self, get_sample: Callable[[], RobotSample | None],
                  read_device_dh: Callable[[], Future | None] | None = None,
@@ -354,6 +355,13 @@ class PosePanel(QWidget):
     def _on_table_applied(self, table: DHTable) -> None:
         self.view.set_table(table)
         self.workspace.set_table(table)
+        self.table_applied.emit(table)
+
+    def set_table(self, table: DHTable) -> None:
+        """同时切换编辑器、三维显示、工作空间，并通知主窗口刷新其他 FK 消费者。"""
+        table = table.copy()
+        self.dh.set_table(table)
+        self._on_table_applied(table)
 
     def _on_workspace_ready(self, cloud) -> None:
         branch = "全部 8 分支" if cloud.branch is None else f"分支 #{cloud.branch}"

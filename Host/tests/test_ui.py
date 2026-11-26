@@ -18,9 +18,12 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from armhost.model.backend import MockBackend  # noqa: E402
+from armhost.model.state import RobotSample  # noqa: E402
 from armhost.protocol import ArmState  # noqa: E402
+from armhost.protocol.msg_report import JointRecord  # noqa: E402
 from armhost.protocol.enums import IkMethod  # noqa: E402
 from armhost.ui import theme  # noqa: E402
+from armhost.ui.joint_table import JointTable  # noqa: E402
 from armhost.ui.main_window import MonitorWindow  # noqa: E402
 
 app = QApplication.instance() or QApplication([])
@@ -157,6 +160,57 @@ class TestWindowLayout(unittest.TestCase):
         self.assertIn("MuJoCo 仿真", tabs)
         inner = [self.w.mujoco_tabs.tabText(i) for i in range(self.w.mujoco_tabs.count())]
         self.assertEqual(inner, ["IK 闭环", "兑换站"])
+
+    def test_joint_table_has_actual_and_target_pose_rows(self):
+        self.assertEqual(self.w.table.rowCount(), 9)
+        self.assertEqual([self.w.table.verticalHeaderItem(i).text() for i in (7, 8)],
+                         ["实际位姿", "目标位姿"])
+
+    def test_dh_preset_switch_updates_pose_table(self):
+        w = self.w
+        self.assertEqual(w.dh_combo.count(), 2)
+        self.assertEqual(w.dh_combo.currentData(), "embedded")
+
+        w.dh_combo.setCurrentIndex(w.dh_combo.findData("bigarm"))
+        pump(0.1)
+        bigarm = w._dh_presets["bigarm"]
+        self.assertEqual([r.as_tuple() for r in w._pose_fk_dh.rows],
+                         [r.as_tuple() for r in bigarm.rows])
+        self.assertEqual([r.as_tuple() for r in w.pose.view.table.rows],
+                         [r.as_tuple() for r in bigarm.rows])
+        self.assertEqual([r.as_tuple() for r in w.pose.workspace._table.rows],
+                         [r.as_tuple() for r in bigarm.rows])
+
+
+class TestJointPoseRows(unittest.TestCase):
+    def test_rows_use_forward_kinematics_for_actual_and_target(self):
+        from armhost.kinematics import DHTable
+
+        table = DHTable()
+        widget = JointTable(7, table_provider=lambda: table)
+        actual = [5.0, 15.0, -20.0, 10.0, 25.0, -10.0, 30.0]
+        target = [8.0, 20.0, -15.0, 12.0, 28.0, -8.0, 33.0]
+        sample = RobotSample(
+            1, 1, 0, ArmState.HOST, 0, 0,
+            tuple(JointRecord(angle_deg=a, target_deg=t)
+                  for a, t in zip(actual, target)))
+
+        widget.update_sample(sample)
+
+        actual_text = widget.item(7, 0).text()
+        target_text = widget.item(8, 0).text()
+        self.assertEqual(actual_text, JointTable._pose_text(table, actual))
+        self.assertEqual(target_text, JointTable._pose_text(table, target))
+        from armhost.kinematics import forward_tcp
+        actual_xyz = forward_tcp(table, actual)[:3, 3]
+        target_xyz = forward_tcp(table, target)[:3, 3]
+        self.assertIn(f"X={actual_xyz[0]:+.4f} m   Y={actual_xyz[1]:+.4f} m   "
+                      f"Z={actual_xyz[2]:+.4f} m", actual_text)
+        self.assertIn(f"X={target_xyz[0]:+.4f} m   Y={target_xyz[1]:+.4f} m   "
+                      f"Z={target_xyz[2]:+.4f} m", target_text)
+        self.assertIn("Roll=", actual_text)
+        self.assertNotEqual(actual_text, target_text)
+        widget.deleteLater()
 
 
 class TestMonitorWindow(unittest.TestCase):
