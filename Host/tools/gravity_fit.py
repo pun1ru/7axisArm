@@ -19,8 +19,9 @@ sys.path.insert(0, str(HOST_ROOT))
 
 from armhost.kinematics import DHTable, default_dh  # noqa: E402
 from armhost.model import gravity_fit as core  # noqa: E402
-from armhost.model.gravity_fit import (G, Dataset, FitOptions, build_system, expand_paths,  # noqa: E402,F401
-                                       filter_dataset, format_report, gravity_regressor, load_dataset,
+from armhost.model.gravity_fit import (G, Dataset, FitOptions, average_noise_groups,  # noqa: E402,F401
+                                       build_system, estimate_noise_group, expand_paths, filter_dataset,
+                                       fit, format_report, gravity_regressor, load_dataset,
                                        per_joint_stats, potential_energy, solve)
 
 DEFAULT_GLOB = str(HOST_ROOT / "logs" / "gravity" / "*.csv")

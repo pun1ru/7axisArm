@@ -96,6 +96,25 @@ class TestGravityPanel(unittest.TestCase):
         self.assertIsNone(o.max_vel)
         self.assertIsNone(o.arm_states)
 
+    def test_noise_groups_are_averaged_and_forwarded_to_weighted_fit(self):
+        self.panel.apply_noise_group(np.array([[1, 2, 3, 4, 5, 6, 7],
+                                               [3, 4, 5, 6, 7, 8, 9]]))
+        self.panel.apply_noise_group(np.array([[2, 3, 4, 5, 6, 7, 8],
+                                               [4, 5, 6, 7, 8, 9, 10]]))
+        np.testing.assert_allclose(self.panel.noise_sigma, np.full(7, np.sqrt(2.0)))
+        self.assertTrue(self.panel.noise_weighted.isChecked())
+        self.assertIn("2 组平均噪声", self.panel.noise_info.text())
+        np.testing.assert_allclose(self.panel.options().noise_sigma, np.full(7, np.sqrt(2.0)))
+
+        p = _synthetic(self.dir, "weighted.csv", self.rng, self.pi)
+        original = p.read_bytes()
+        self.panel.add_file(p)
+        result = self.panel.run()
+        self.assertIsNotNone(result)
+        self.assertIsNotNone(result.weighted_rmse)
+        self.assertIn("按关节噪声加权最小二乘", self.panel.report.toPlainText())
+        self.assertEqual(p.read_bytes(), original, "噪声采集和加权拟合不得改写原始 CSV")
+
     def test_state_and_velocity_filters(self):
         n = 8
         q = _poses(self.rng, n, 170)

@@ -137,7 +137,7 @@ class MonitorWindow(QMainWindow):
         self.record.replay_requested.connect(self._start_replay)
         self.record.replay_pause.connect(self._replay_pause)
         self.record.replay_seek.connect(self._replay_seek)
-        self.gravity = GravityFitPanel(lambda: self.pose.view.table)
+        self.gravity = GravityFitPanel(lambda: self.pose.view.table, self.ctrl.latest)
         self.stats = StatsTable()
         self.events = LogView()
         self.hex = HexPanel()

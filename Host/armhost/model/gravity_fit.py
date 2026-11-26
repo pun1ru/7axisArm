@@ -14,6 +14,7 @@
 
 28 个参数里只有约 12 个独立（基参数），数据激励不足时更少，所以用截断 SVD 求最小范数解（rcond）。
 报告的是"能复现力矩的参数"，不是唯一的物理质量/质心。bias=True 时同时拟合每个关节的力矩零偏。
+noise_sigma 给定时，按每轴静止力矩噪声 σ 对每组方程做行归一化，即加权最小二乘。
 """
 
 from __future__ import annotations
@@ -103,6 +104,8 @@ class FitOptions:
     rcond: float = 1e-3
     g: float = G
     cv: bool = True
+    noise_sigma: list[float] | None = None
+    noise_floor: float = 1e-6
 
     def __post_init__(self) -> None:
         if self.torque_col not in ("torque", "cmd"):
@@ -111,6 +114,36 @@ class FitOptions:
             raise ValueError("sign 只能是 +1 / -1")
         if not self.rcond > 0:
             raise ValueError("rcond 必须 > 0")
+        if self.noise_sigma is not None:
+            if len(self.noise_sigma) == 0 or not np.all(np.isfinite(self.noise_sigma)):
+                raise ValueError("noise_sigma 必须是有限的一维关节噪声")
+            if np.any(np.asarray(self.noise_sigma) < 0):
+                raise ValueError("noise_sigma 不能为负")
+        if not self.noise_floor > 0:
+            raise ValueError("noise_floor 必须 > 0")
+
+
+def estimate_noise_group(frames_nm, ddof: int = 1) -> np.ndarray:
+    """一组静止力矩帧 -> 每轴标准差。frames_nm 形状为 (samples, joints)。"""
+    data = np.asarray(frames_nm, dtype=float)
+    if data.ndim != 2 or data.shape[0] < max(2, ddof + 1):
+        raise ValueError("每组噪声至少需要 2 个静止样本")
+    if not np.all(np.isfinite(data)):
+        raise ValueError("噪声样本包含 NaN/Inf")
+    return np.std(data, axis=0, ddof=ddof)
+
+
+def average_noise_groups(groups: list[np.ndarray]) -> np.ndarray:
+    """多组每轴标准差按组数算术平均。"""
+    if not groups:
+        raise ValueError("没有噪声组")
+    arrays = [np.asarray(g, dtype=float) for g in groups]
+    shape = arrays[0].shape
+    if len(shape) != 1 or shape[0] == 0 or any(a.shape != shape for a in arrays):
+        raise ValueError("噪声组维度不一致")
+    if any(not np.all(np.isfinite(a)) for a in arrays):
+        raise ValueError("噪声组包含 NaN/Inf")
+    return np.mean(np.vstack(arrays), axis=0)
 
 
 def _joint_count(cols: list[str]) -> int:
@@ -214,22 +247,45 @@ def build_system(table: DHTable, datasets: list[Dataset], bias: bool, g: float,
     return np.vstack(Ys), np.concatenate(ts), np.concatenate(owner)
 
 
-def solve(Y: np.ndarray, tau: np.ndarray, rcond: float) -> tuple[np.ndarray, int, np.ndarray]:
-    x, _, rank, sv = np.linalg.lstsq(Y, tau, rcond=rcond)
+def solve(Y: np.ndarray, tau: np.ndarray, rcond: float,
+          row_sigma: np.ndarray | None = None) -> tuple[np.ndarray, int, np.ndarray]:
+    """截断 SVD 最小二乘；给定逐方程噪声 σ 时先按行归一化，即加权最小二乘。"""
+    if row_sigma is None:
+        A, b = Y, tau
+    else:
+        sigma = np.asarray(row_sigma, dtype=float)
+        if sigma.shape != tau.shape or not np.all(np.isfinite(sigma)) or np.any(sigma <= 0):
+            raise ValueError("row_sigma 必须是和 tau 同形状的正有限数组")
+        A, b = Y / sigma[:, None], tau / sigma
+    x, _, rank, sv = np.linalg.lstsq(A, b, rcond=rcond)
     return x, int(rank), sv
 
 
-def per_joint_stats(Y, tau, x, n: int) -> list[dict]:
+def joint_row_sigma(noise_sigma: list[float] | np.ndarray | None, n_poses: int,
+                    n: int) -> np.ndarray | None:
+    if noise_sigma is None:
+        return None
+    sigma = np.asarray(noise_sigma, dtype=float)
+    if sigma.shape != (n,):
+        raise ValueError(f"noise_sigma 必须有 {n} 个关节")
+    return np.tile(sigma, n_poses)
+
+
+def per_joint_stats(Y, tau, x, n: int, noise_sigma=None) -> list[dict]:
     res = (tau - Y @ x).reshape(-1, n)
     t = tau.reshape(-1, n)
+    sigma = None if noise_sigma is None else np.asarray(noise_sigma, dtype=float)
     out = []
     for j in range(n):
         ss_tot = float(np.sum((t[:, j] - t[:, j].mean()) ** 2))
+        rmse = float(np.sqrt(np.mean(res[:, j] ** 2)))
         out.append({
-            "rmse": float(np.sqrt(np.mean(res[:, j] ** 2))),
+            "rmse": rmse,
             "max_abs": float(np.max(np.abs(res[:, j]))),
             "tau_rms": float(np.sqrt(np.mean(t[:, j] ** 2))),
             "r2": float(1 - np.sum(res[:, j] ** 2) / ss_tot) if ss_tot > 1e-6 else float("nan"),
+            "noise_sigma": None if sigma is None else float(sigma[j]),
+            "normalized_rmse": None if sigma is None else float(rmse / sigma[j]),
         })
     return out
 
@@ -247,6 +303,8 @@ class FitResult:
     rmse: float
     tau_rms: float
     cv: list[dict] | None
+    weighted_rmse: float | None = None
+    noise_sigma: np.ndarray | None = None
 
     @property
     def n(self) -> int:
@@ -274,6 +332,9 @@ class FitResult:
                 "rcond": o.rcond, "bias_fitted": o.bias, "files": [d.name for d in self.datasets],
                 "pi_layout": "per link [m*cx, m*cy, m*cz, m]; link i = joint i (0-based)",
                 "rank": self.rank, "singular_values": self.sv.tolist(), "rmse": self.rmse,
+                "weighted_rmse": self.weighted_rmse,
+                "noise_sigma_nm": None if self.noise_sigma is None else self.noise_sigma.tolist(),
+                "noise_floor_nm": o.noise_floor,
                 "pi": self.pi.tolist(), "bias": self.bias.tolist(), "stats": self.stats, "cv": self.cv}
 
 
@@ -281,21 +342,32 @@ def fit(table: DHTable, datasets: list[Dataset], opts: FitOptions, warnings: lis
     if not datasets:
         raise ValueError("没有数据")
     Y, tau, owner = build_system(table, datasets, opts.bias, opts.g, opts.sign)
-    x, rank, sv = solve(Y, tau, opts.rcond)
     n = table.n
+    noise = None if opts.noise_sigma is None else np.maximum(
+        np.asarray(opts.noise_sigma, dtype=float), opts.noise_floor)
+    row_sigma = joint_row_sigma(noise, len(tau) // n, n)
+    x, rank, sv = solve(Y, tau, opts.rcond, row_sigma)
+    residual = tau - Y @ x
+    weighted_rmse = None if row_sigma is None else float(
+        np.sqrt(np.mean((residual / row_sigma) ** 2)))
     cv = None
     if opts.cv and len(datasets) >= 2:
         cv = []
         for k, d in enumerate(datasets):
             tr, te = owner != k, owner == k
-            xk, rk, _ = solve(Y[tr], tau[tr], opts.rcond)
+            xk, rk, _ = solve(Y[tr], tau[tr], opts.rcond,
+                              None if row_sigma is None else row_sigma[tr])
             res = (tau[te] - Y[te] @ xk).reshape(-1, n)
             cv.append({"file": d.name, "rank": rk, "rmse": float(np.sqrt(np.mean(res ** 2))),
+                       "weighted_rmse": None if row_sigma is None else float(
+                           np.sqrt(np.mean((res.reshape(-1) / row_sigma[te]) ** 2))),
                        "rmse_per_joint": np.sqrt(np.mean(res ** 2, axis=0)).tolist(),
                        "tau_rms_per_joint": np.sqrt(np.mean(tau[te].reshape(-1, n) ** 2, axis=0)).tolist()})
     return FitResult(table, opts, datasets, list(warnings or []), x, rank, sv,
-                     per_joint_stats(Y, tau, x, n), float(np.sqrt(np.mean((tau - Y @ x) ** 2))),
-                     float(np.sqrt(np.mean(tau ** 2))), cv)
+                     per_joint_stats(Y, tau, x, n, noise),
+                     float(np.sqrt(np.mean(residual ** 2))),
+                     float(np.sqrt(np.mean(tau ** 2))), cv, weighted_rmse,
+                     noise)
 
 
 def run(paths: list[str | Path], table: DHTable, opts: FitOptions | None = None) -> FitResult:
@@ -331,6 +403,14 @@ def format_report(r: FitResult) -> str:
     for j, s in enumerate(r.stats):
         L.append(f"  J{j}  {_fmt(s['tau_rms'])}  {_fmt(s['rmse'], 9, 5)}  {_fmt(s['max_abs'], 9, 5)}  {_fmt(s['r2'], 7, 3)}")
     L.append(f"总体 RMSE {r.rmse:.5f} N·m（力矩 RMS {r.tau_rms:.5f}）")
+    if r.noise_sigma is not None:
+        L.append("拟合方式: 按关节噪声加权最小二乘")
+        L.append("噪声 sigma [N·m]: " + "  ".join(
+            f"J{j}={v:.6g}" for j, v in enumerate(r.noise_sigma)))
+        L.append(f"加权 RMSE {r.weighted_rmse:.5f} sigma")
+        L.append("关节   噪声sigma   归一化RMSE")
+        for j, s in enumerate(r.stats):
+            L.append(f"  J{j}  {_fmt(s['noise_sigma'], 10, 6)}  {_fmt(s['normalized_rmse'], 10, 4)}")
     if o.bias:
         L.append("\n力矩零偏 [N·m]: " + "  ".join(f"J{j}={v:+.4f}" for j, v in enumerate(r.bias)))
     L.append("\npi 最小范数解（每连杆 [m*cx, m*cy, m*cz, m]；不是唯一物理解，只保证复现 tau）:")

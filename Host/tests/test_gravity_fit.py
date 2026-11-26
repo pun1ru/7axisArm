@@ -71,6 +71,40 @@ class TestRegressor(unittest.TestCase):
 
 
 class TestFit(unittest.TestCase):
+    def test_noise_groups_use_standard_deviation_and_mean(self):
+        g1 = gf.estimate_noise_group([[1.0, 10.0], [3.0, 30.0], [5.0, 50.0]])
+        g2 = gf.estimate_noise_group([[2.0, 20.0], [4.0, 40.0], [6.0, 60.0]])
+        np.testing.assert_allclose(g1, [2.0, 20.0])
+        np.testing.assert_allclose(g2, [2.0, 20.0])
+        np.testing.assert_allclose(gf.average_noise_groups([g1, g2]), [2.0, 20.0])
+
+    def test_row_noise_turns_lstsq_into_weighted_lstsq(self):
+        Y = np.ones((2, 1))
+        tau = np.array([1.0, 10.0])
+        x_plain, _, _ = gf.solve(Y, tau, 1e-9)
+        x_weighted, _, _ = gf.solve(Y, tau, 1e-9, np.array([1.0, 10.0]))
+        np.testing.assert_allclose(x_plain, [5.5])
+        np.testing.assert_allclose(x_weighted, [1.1 / 1.01])
+        self.assertLess(x_weighted[0], x_plain[0])
+
+    def test_weighted_fit_records_sigma_and_weighted_rmse(self):
+        rng = np.random.default_rng(41)
+        pi = rng.normal(scale=0.05, size=28)
+        q = _poses(rng, 40, 170)
+        tau = np.array([gf.gravity_regressor(TABLE, np.radians(r)) @ pi for r in q])
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "w.csv"
+            _write_csv(p, q, tau)
+            ds = gf.load_dataset(p)
+        sigma = [1e-4] * 7
+        result = gf.fit(TABLE, [ds], gf.FitOptions(noise_sigma=sigma, cv=False))
+        self.assertIsNotNone(result.weighted_rmse)
+        np.testing.assert_allclose(result.noise_sigma, sigma)
+        self.assertTrue(all(s["noise_sigma"] == sigma[0] for s in result.stats))
+        self.assertTrue(all(s["normalized_rmse"] is not None for s in result.stats))
+        self.assertIn("按关节噪声加权最小二乘", gf.format_report(result))
+        self.assertEqual(result.to_dict()["noise_sigma_nm"], sigma)
+
     def test_recovers_synthetic_torque(self):
         rng = np.random.default_rng(3)
         pi = rng.normal(scale=0.05, size=28)

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import Qt
+import numpy as np
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
@@ -21,13 +23,22 @@ from ..model import gravity_fit as gf
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 GRAVITY_DIR = LOG_DIR / "gravity"
+NOISE_TIMER_MS = 20
+NOISE_MIN_SAMPLES = 10
+NOISE_STATIC_VEL_DPS = 2.0
 
 
 class GravityFitPanel(QWidget):
-    def __init__(self, get_table: Callable[[], DHTable], parent=None) -> None:
+    def __init__(self, get_table: Callable[[], DHTable],
+                 get_sample: Callable[[], object | None] | None = None, parent=None) -> None:
         super().__init__(parent)
         self._get_table = get_table
+        self._get_sample = get_sample
         self.result: gf.FitResult | None = None
+        self.noise_sigma: np.ndarray | None = None
+        self._noise_groups: list[np.ndarray] = []
+        self._noise_frames: list[np.ndarray] = []
+        self._noise_start_ns = 0
 
         # ---- 文件列表
         self.files = QListWidget()
@@ -75,6 +86,28 @@ class GravityFitPanel(QWidget):
         self.cv = QCheckBox("留一文件交叉验证")
         self.cv.setChecked(True)
 
+        # ---- 静止噪声采集
+        self.noise_duration = QDoubleSpinBox()
+        self.noise_duration.setRange(0.2, 60.0)
+        self.noise_duration.setDecimals(1)
+        self.noise_duration.setValue(2.0)
+        self.noise_duration.setSuffix(" s")
+        self.noise_btn = QPushButton("采集一组噪声")
+        self.noise_btn.setToolTip("机械臂保持静止，连续采集一段时间的力矩标准差；可重复采集多组")
+        self.noise_btn.setEnabled(get_sample is not None)
+        self.noise_clear_btn = QPushButton("清除")
+        self.noise_weighted = QCheckBox("按关节噪声加权")
+        self.noise_weighted.setEnabled(False)
+        self.noise_weighted.setToolTip("用采集到的每轴 torque_nm 标准差归一化方程；多组取均值")
+        self.noise_info = QLabel("尚未采集")
+        self.noise_info.setObjectName("value")
+        self.noise_info.setWordWrap(True)
+        self.noise_timer = QTimer(self)
+        self.noise_timer.setInterval(NOISE_TIMER_MS)
+        self.noise_timer.timeout.connect(self._collect_noise_sample)
+        self.noise_btn.clicked.connect(self.start_noise_capture)
+        self.noise_clear_btn.clicked.connect(self.clear_noise)
+
         def row(label: str, w: QWidget) -> QHBoxLayout:
             r = QHBoxLayout()
             r.addWidget(QLabel(label))
@@ -93,6 +126,13 @@ class GravityFitPanel(QWidget):
         cr.addWidget(self.bias)
         cr.addWidget(self.cv)
         mid.addLayout(cr)
+        nr = QHBoxLayout()
+        nr.addWidget(self.noise_btn)
+        nr.addWidget(self.noise_duration)
+        nr.addWidget(self.noise_clear_btn)
+        mid.addLayout(nr)
+        mid.addWidget(self.noise_weighted)
+        mid.addWidget(self.noise_info)
         mid.addStretch(1)
 
         # ---- 动作 + 报告
@@ -163,12 +203,60 @@ class GravityFitPanel(QWidget):
             self.add_file(p)
 
     # ------------------------------------------------------------ 拟合
+    def start_noise_capture(self) -> None:
+        if self._get_sample is None:
+            self.noise_info.setText("当前数据源不支持在线噪声采集")
+            return
+        self._noise_frames = []
+        self._noise_start_ns = time.monotonic_ns()
+        self.noise_btn.setEnabled(False)
+        self.noise_info.setText("正在采集静止噪声，请保持机械臂静止…")
+        self.noise_timer.start()
+
+    def _collect_noise_sample(self) -> None:
+        sample = self._get_sample() if self._get_sample is not None else None
+        if sample is not None:
+            joints = getattr(sample, "joints", ())
+            if joints and all(abs(float(j.velocity_dps)) <= NOISE_STATIC_VEL_DPS for j in joints):
+                self._noise_frames.append(np.array([float(j.torque_nm) for j in joints], dtype=float))
+        elapsed_s = (time.monotonic_ns() - self._noise_start_ns) * 1e-9
+        if elapsed_s >= self.noise_duration.value():
+            self.noise_timer.stop()
+            self.noise_btn.setEnabled(True)
+            if len(self._noise_frames) < NOISE_MIN_SAMPLES:
+                self.noise_info.setText(
+                    f"有效静止样本不足（{len(self._noise_frames)}），请保持静止后重试")
+                return
+            self.apply_noise_group(np.vstack(self._noise_frames))
+
+    def apply_noise_group(self, frames_nm) -> np.ndarray:
+        sigma = gf.estimate_noise_group(frames_nm)
+        self._noise_groups.append(sigma)
+        self.noise_sigma = gf.average_noise_groups(self._noise_groups)
+        self.noise_weighted.setEnabled(True)
+        self.noise_weighted.setChecked(True)
+        values = " ".join(f"J{j}={v:.3g}" for j, v in enumerate(self.noise_sigma))
+        self.noise_info.setText(f"{len(self._noise_groups)} 组平均噪声 σ [N·m]：{values}")
+        return self.noise_sigma
+
+    def clear_noise(self) -> None:
+        self.noise_timer.stop()
+        self.noise_btn.setEnabled(self._get_sample is not None)
+        self._noise_frames = []
+        self._noise_groups = []
+        self.noise_sigma = None
+        self.noise_weighted.setChecked(False)
+        self.noise_weighted.setEnabled(False)
+        self.noise_info.setText("尚未采集")
+
     def options(self) -> gf.FitOptions:
         txt = self.states.text().strip()
         states = [int(s) for s in re.split(r"[,\s]+", txt) if s] if txt else None
         return gf.FitOptions(torque_col=self.torque.currentData(), sign=float(self.sign.currentData()),
                              arm_states=states, max_vel=self.vel.value() if self.vel_on.isChecked() else None,
-                             bias=self.bias.isChecked(), rcond=float(self.rcond.currentData()), cv=self.cv.isChecked())
+                             bias=self.bias.isChecked(), rcond=float(self.rcond.currentData()), cv=self.cv.isChecked(),
+                             noise_sigma=(self.noise_sigma.tolist()
+                                          if self.noise_weighted.isChecked() and self.noise_sigma is not None else None))
 
     def run(self) -> gf.FitResult | None:
         self.result = None
@@ -178,6 +266,8 @@ class GravityFitPanel(QWidget):
             paths = self._paths()
             if not paths:
                 raise ValueError("没有勾选任何 CSV")
+            if self.noise_weighted.isChecked() and self.noise_sigma is None:
+                raise ValueError("已选择噪声加权，但还没有采集噪声")
             self.result = gf.run(paths, self._get_table(), self.options())
         except (OSError, ValueError, KeyError) as e:
             self.report.setPlainText(f"错误: {e}")
@@ -187,7 +277,9 @@ class GravityFitPanel(QWidget):
         self.report.setPlainText(gf.format_report(r))
         self.save_btn.setEnabled(True)
         self.copy_btn.setEnabled(True)
-        self.info.setText(f"{r.n_poses} 个位姿，秩 {r.rank}/{r.n_unknowns}，RMSE {r.rmse:.4f} N·m")
+        rmse_text = (f"加权 RMSE {r.weighted_rmse:.4f}σ" if r.weighted_rmse is not None
+                     else f"RMSE {r.rmse:.4f} N·m")
+        self.info.setText(f"{r.n_poses} 个位姿，秩 {r.rank}/{r.n_unknowns}，{rmse_text}")
         return r
 
     def _save(self) -> None:
