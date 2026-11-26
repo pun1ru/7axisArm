@@ -1,13 +1,15 @@
 {
-  "clangd.path": "/usr/bin/clangd",
   "clangd.arguments": [
     "--compile-commands-dir=${workspaceFolder}/Real/DIYcontroller/MDK-ARM/out/dm_mcV610/dm_mcV610"
   ],
   "clangd.onConfigChanged": "restart",
   "C_Cpp.intelliSenseEngine": "disabled",
   "files.associations": {
-    "*.h": "cpp"
+    "*.h": "c"
   },
   "debug.hideSlowPreLaunchWarning": true,
-  "debug.showInStatusBar": "never"
+  "debug.showInStatusBar": "never",
+  "emberprobe.sampleFrequencyHz": 20,
+  "emberprobe.adapterSpeedKhz": 100,
+  "emberprobe.samplingAdapterSpeedKhz": 100
 }

@@ -119,6 +119,8 @@ USB CDC：`Docs/USB核复位卡死导致整机死机-排查记录.md` 里的问�
 
 一帧只更新一个关节，未列出的关节保持原目标和原闭环状态。新 Host 始终发送多圈目标；旧 8 B 帧 flags=0 时仍按单圈绝对角兼容。只有 `arm_state == HOST`（左上 + 右下拨杆）时接受 SET_OPEN / SET_CLOSED。固件会再检查一次当前圈多圈限位，越界或状态不符回 `BAD_PARAM`；成功回 `ACK`。目标命令不自动重试，链路超过 300 ms 没有有效帧时全部关节自动退出闭环。`STOP_ALL` 是安全命令，任何状态都接受。
 
+`TEST` 状态由遥控器“左拨杆中 + 右拨杆下”进入。进入后先按当前角度对齐全部关节目标；CH1 增量调整当前选中关节，CH4 越过正向阈值（并回中）后按 J0→J6 循环切换选中关节。
+
 ### 0x24 SET_IK_TARGET（64 B；兼容旧 32 B 手动 ψ 帧）
 | 偏移 | 类型 | 字段 | 说明 |
 |---|---|---|---|
@@ -212,7 +214,7 @@ Host 仍兼容旧 32 B 帧，但旧帧没有 `plan_sequence/plan_steps/plan_exec
 | 偏移 | 类型 | 字段 | 说明 |
 |---|---|---|---|
 | 0 | u32 | mcu_time_us | 本次观测的采样时刻 |
-| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT 6 HOST 7 HOST_IK |
+| 4 | u8 | arm_state | ArmState_t：0 PROTECTED 1 ENABLE 2 FEEDBACK 3 MASTER 4 AUTO 5 SERVANT 6 HOST 7 HOST_IK 8 TEST |
 | 5 | u8 | joint_count | N |
 | 6 | u8 | record_size | 每条关节记录的字节数，v1.0 = 28；接收方按它步进，兼容以后加长 |
 | 7 | u8 | reserved | 0 |

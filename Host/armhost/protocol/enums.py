@@ -41,6 +41,7 @@ class ArmState(IntEnum):
     SERVANT = 5
     HOST = 6
     HOST_IK = 7
+    TEST = 8
 
 
 class ArmRole(IntEnum):

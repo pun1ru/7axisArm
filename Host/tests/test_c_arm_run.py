@@ -31,13 +31,15 @@ from test_c_gravity import PI_USER, _find_vcvars  # noqa: E402
 FW = ROOT.parent / "Real" / "DIYcontroller" / "LibSE"
 STUB = ROOT / "tests" / "c_stub"
 DRIVER = ROOT / "tests" / "c_arm_driver.c"
-SRC = [FW / "Module" / "Arm" / n for n in ("arm.c", "arm_jointctrl.c", "arm_kinematics.c", "arm_dynamics.c")] + [
-    FW / "Algorithm" / "Kinematics" / "dh.c", FW / "Algorithm" / "Control" / "PID" / "pid.c",
+SRC = [FW / "Module" / "Arm" / n for n in ("arm.c", "arm_ik.c", "arm_jointctrl.c",
+                                           "arm_kinematics.c", "arm_dynamics.c")] + [
+    FW / "Algorithm" / "Kinematics" / "dh.c", FW / "Algorithm" / "Kinematics" / "ik_numeric.c",
+    FW / "Algorithm" / "Kinematics" / "ik_analytic.c", FW / "Algorithm" / "Control" / "PID" / "pid.c",
     FW / "Algorithm" / "Math" / "algorism.c", STUB / "motor_stub.c", DRIVER]
 INC = [STUB, FW / "Module" / "Arm", FW / "Algorithm" / "Kinematics", FW / "Algorithm" / "Math",
        FW / "Algorithm" / "Control" / "PID", FW / "Drivers" / "Motor"]
 
-PROTECTED, ENABLE, HOST = 0, 1, 6
+PROTECTED, ENABLE, HOST, TEST = 0, 1, 6, 8
 
 
 def build(out: Path, output_flag: int = 1) -> bool:
@@ -243,6 +245,94 @@ class TestArmRunGravity(unittest.TestCase):
         out = self.session(["state 6", q_line(Q), "run", "host 2 50.0 1", "run", "stop", "run"], kp=0.02, omax=5.0)
         tau, _, _ = parse_run(out[-1])
         np.testing.assert_allclose(tau[1:], ref[1:], atol=1e-5)
+
+    def test_rc_test_state_aligns_all_joints_on_entry(self):
+        out = self.session(["state 8", q_line(Q), "run", "dump"], kp=0.5, omax=5.0)
+        self.assertEqual(out[0], "ok 1")
+        targets = np.array(out[-1].split(), float)
+        np.testing.assert_allclose(targets, Q, atol=1e-6)
+
+    def test_motor_run_is_sent_once_only_when_leaving_protection(self):
+        out = self.session([
+            "state 1", "run", "run", "io 0",
+            "state 6", "io 0",
+            "state 0", "io 0",
+            "state 1", "io 0",
+        ], omax=5.0)
+        io_lines = [line for line in out if re.fullmatch(r"\d+ \d+", line)]
+        self.assertEqual(io_lines, ["1 0", "1 0", "1 1", "2 1"])
+
+    def test_rc_test_ch1_increments_selected_joint_only(self):
+        out = self.session([
+            "state 8", q_line(Q), "run",
+            "test 660 0", "run", "dump",
+        ], omax=5.0)
+        targets = np.array(out[-1].split(), float)
+        self.assertAlmostEqual(targets[0], Q[0] + 0.02, places=6)
+        np.testing.assert_allclose(targets[1:], Q[1:], atol=1e-6)
+
+    def test_rc_test_keeps_all_joints_in_closed_loop(self):
+        shifted = np.asarray(Q) + 1.0
+        out = self.session([
+            "state 8", q_line(Q), "run",
+            q_line(shifted), "run",
+        ], mask=0, kp=1.0, omax=5.0)
+        tau, _, _ = parse_run(out[-1])
+        np.testing.assert_allclose(tau, -1.0, atol=1e-6)
+
+    def test_position_mode_writes_target_without_stacking_arm_pid(self):
+        shifted = np.asarray(Q) + 1.0
+        out = self.session([
+            "state 8", q_line(Q), "run",
+            "mode 4 0", "mode 5 0", "mode 6 0",
+            q_line(shifted), "run", "dumpcmd",
+        ], mask=0, kp=1.0, omax=5.0)
+        joints = [[float(v) for v in line.split()] for line in out[-7:]]
+        self.assertAlmostEqual(joints[0][2], -1.0, places=6)
+        for j in (4, 5, 6):
+            self.assertEqual(joints[j][0], 0)
+            self.assertAlmostEqual(joints[j][1], Q[j], places=5)
+            self.assertAlmostEqual(joints[j][2], 0.0, places=6)
+            self.assertAlmostEqual(joints[j][3], np.radians(Q[j]), places=6)
+
+    def test_position_mode_applies_joint_direction(self):
+        out = self.session([
+            "state 8", q_line(Q), "run",
+            "mode 6 0", "dir 6 -1", "run", "dumpcmd",
+        ], mask=0, kp=1.0, omax=5.0)
+        joint6 = [float(v) for v in out[-1].split()]
+        self.assertAlmostEqual(joint6[3], -np.radians(Q[6]), places=6)
+
+    def test_rc_test_target_is_clamped_to_locked_limit(self):
+        q = list(Q)
+        q[0] = 179.99
+        out = self.session([
+            "state 8", q_line(q), "run", "test 660 0",
+            *(["run"] * 10), "dump",
+        ], omax=5.0)
+        targets = np.array(out[-1].split(), float)
+        self.assertAlmostEqual(targets[0], 180.0, places=6)
+
+    def test_rc_test_ch4_cycles_joint_once_per_throw(self):
+        out = self.session([
+            "state 8", q_line(Q), "run",
+            "test 0 660", "run", "testdump",
+            "test 0 0", "run", "testdump",
+            "test 0 660", "run", "testdump",
+            "run", "testdump",
+            "test 0 0", "run",
+            "test 0 660", "run", "testdump",
+        ], omax=5.0)
+        dumps = [line for line in out if re.fullmatch(r"\d+ \d+ \d+", line)]
+        self.assertEqual(dumps, ["0 0 0", "0 1 0", "1 0 0", "1 0 0", "2 0 0"])
+
+    def test_rc_test_ch4_wraps_from_j6_to_j0(self):
+        lines = ["state 8", q_line(Q), "run"]
+        for _ in range(7):
+            lines.extend(["test 0 0", "run", "test 0 660", "run"])
+        lines.append("testdump")
+        out = self.session(lines, omax=5.0)
+        self.assertEqual(out[-1], "0 0 0")
 
     def test_nonfinite_angle_gives_zero_not_nan(self):
         bad = list(Q)

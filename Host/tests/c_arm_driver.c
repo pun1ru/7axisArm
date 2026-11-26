@@ -32,12 +32,31 @@ static const float BETA12[12] = {
 static Motor_t g_motor[ARM_JOINT_COUNT];
 static CanInstance_t g_can;
 static float g_sent[ARM_JOINT_COUNT];
+static float g_sent_position[ARM_JOINT_COUNT];
+static unsigned g_enable_count[ARM_JOINT_COUNT];
+static unsigned g_disable_count[ARM_JOINT_COUNT];
 static Arm_t g_arm;
 
 static void FakeSend(Motor_t *m)
 {
     for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i)
-        if (m == &g_motor[i]) g_sent[i] = m->motorcmd.torque;
+        if (m == &g_motor[i])
+        {
+            g_sent[i] = m->motorcmd.torque;
+            g_sent_position[i] = m->motorcmd.position;
+        }
+}
+
+static void FakeEnable(Motor_t *m)
+{
+    for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i)
+        if (m == &g_motor[i]) g_enable_count[i]++;
+}
+
+static void FakeDisable(Motor_t *m)
+{
+    for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i)
+        if (m == &g_motor[i]) g_disable_count[i]++;
 }
 
 int main(void)
@@ -48,6 +67,8 @@ int main(void)
     for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i)
     {
         g_motor[i].motorcmd.control_mode = MODE_TORQUE;
+        g_motor[i].motorops.enable = FakeEnable;
+        g_motor[i].motorops.disable = FakeDisable;
         g_motor[i].motorops.sendcommand = FakeSend;
         g_motor[i].feedback.status = MOTOR_ENABLED;
     }
@@ -110,6 +131,24 @@ int main(void)
             printf("host %d\n", (int)Arm_SetHostTarget(&g_arm, (uint8_t)j, t, closed != 0,
                                                      false));
         }
+        else if (strcmp(cmd, "test") == 0)
+        {
+            int ch1, ch4;
+            if (scanf("%d %d", &ch1, &ch4) != 2) return 2;
+            Arm_SetTestInput(&g_arm, (int16_t)ch1, (int16_t)ch4);
+        }
+        else if (strcmp(cmd, "mode") == 0)
+        {
+            int j, mode;
+            if (scanf("%d %d", &j, &mode) != 2) return 2;
+            g_motor[j].motorcmd.control_mode = (ControlMode_t)mode;
+        }
+        else if (strcmp(cmd, "dir") == 0)
+        {
+            int j, direction;
+            if (scanf("%d %d", &j, &direction) != 2) return 2;
+            g_arm.config.param.direction[j] = (int8_t)direction;
+        }
         else if (strcmp(cmd, "stop") == 0)
         {
             Arm_StopHostControl(&g_arm);
@@ -127,6 +166,26 @@ int main(void)
         {
             for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i) printf("%.9g ", g_arm.joint_ctrl[i].target_deg);
             printf("\n");
+        }
+        else if (strcmp(cmd, "testdump") == 0)
+        {
+            printf("%u %u %u\n", g_arm.test.selected_joint, g_arm.test.ch4_switch_armed,
+                   g_arm.test.align_pending);
+        }
+        else if (strcmp(cmd, "dumpcmd") == 0)
+        {
+            for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i)
+            {
+                printf("%d %.9g %.9g %.9g\n", g_motor[i].motorcmd.control_mode,
+                       g_arm.joint_ctrl[i].target_deg, g_sent[i],
+                       g_motor[i].motorcmd.position);
+            }
+        }
+        else if (strcmp(cmd, "io") == 0)
+        {
+            int j;
+            if (scanf("%d", &j) != 1) return 2;
+            printf("%u %u\n", g_enable_count[j], g_disable_count[j]);
         }
     }
     return 0;

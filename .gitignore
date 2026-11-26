@@ -1,0 +1,9 @@
+# EmberProbe / OpenOCD / debug-probe generated integration files.
+.agents/skills/_emberprobe/
+.agents/skills/mcu-*/
+.agents/skills/computer-use/
+
+# OpenOCD runtime logs generated inside the workspace.
+.openocd/
+openocd*.log
+*.openocd.log
