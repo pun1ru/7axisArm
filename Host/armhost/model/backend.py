@@ -197,7 +197,7 @@ class SerialBackend(RobotBackend):
 
     def read_dh(self) -> Future:
         """PARAM_READ 0x0400 × (关节数×4)，组装成 DHTable。返回 Future，不阻塞调用方。"""
-        from ..kinematics import BIGARM_TCP_RPY_DEG, BIGARM_TCP_XYZ_M, DHRow, DHTable
+        from ..kinematics import FIRMWARE_TCP_RPY_DEG, FIRMWARE_TCP_XYZ_M, DHRow, DHTable
         n = self.link.device_info.joint_count if self.link.device_info else 7
         series = self._read_param_series([(0x0400, k) for k in range(n * 4)])
         out: Future = Future()
@@ -207,7 +207,7 @@ class SerialBackend(RobotBackend):
                 v = f.result()
                 out.set_result(DHTable(
                     [DHRow(*v[4 * i:4 * i + 4]) for i in range(n)], f"设备 {self.label}",
-                    tool_xyz_m=BIGARM_TCP_XYZ_M, tool_rpy_deg=BIGARM_TCP_RPY_DEG))
+                    tool_xyz_m=FIRMWARE_TCP_XYZ_M, tool_rpy_deg=FIRMWARE_TCP_RPY_DEG))
             except Exception as e:     # 任意一个参数失败就整体失败
                 out.set_exception(e)
         series.add_done_callback(done)

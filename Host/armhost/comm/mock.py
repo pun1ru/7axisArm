@@ -285,8 +285,11 @@ class SimDevice:
             psi = 0.0
         plan_units = int(round(self.ik_plan_ms * 10.0)) if self.ik_method == 1 else 0
         exec_index = 0 if now < self.ik_planning_until else self.ik_plan_steps
+        target_valid = self.arm_state == ArmState.HOST_IK
+        target_pose = self.ik_pose if target_valid else (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         return ArmPosture(branch, flags, psi, *pose, min(plan_units, 0xFFFF),
-                          self.ik_plan_sequence, self.ik_plan_steps, exec_index)
+                          self.ik_plan_sequence, self.ik_plan_steps, exec_index, 0, 0,
+                          target_valid, *target_pose)
 
     def _tick_us(self, t: float) -> int:
         return int((t - self._t0) * 1e6) & 0xFFFFFFFF

@@ -17,6 +17,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, QHBoxLayout, QLabel,
                                QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
+from ..kinematics import DHTable, forward_poses_deg
 from ..model import GROUP_TITLE, GROUPS, QKEYS, QUANTITIES, TIME_HOST, TIME_MCU, BufferView, SampleBuffer
 from . import theme
 from .layout_util import hscrollable
@@ -24,6 +25,17 @@ from .layout_util import hscrollable
 WINDOWS_S = (2, 5, 10, 20, 30, 60)
 DASHED = {"target_deg", "torque_cmd_nm"}
 DEFAULT_ON = {"angle_deg", "velocity_dps", "torque_nm"}
+POSE_AXES = (
+    ("x", "X", 0),
+    ("y", "Y", 1),
+    ("z", "Z", 2),
+)
+POSE_SERIES = tuple(
+    (group, source, axis, index, color_index)
+    for group in ("position", "attitude")
+    for axis, _label, index in POSE_AXES
+    for source, color_index in (("actual", index), ("target", index))
+)
 
 
 # PySide6 6.11 + Python 3.14 can crash natively in pyqtgraph's
@@ -128,10 +140,12 @@ class ChannelSelector(QWidget):
 class ScopeWidget(QWidget):
     paused_changed = Signal(bool)
 
-    def __init__(self, buffer: SampleBuffer, joint_count: int = 7, fps: int = 30, parent=None) -> None:
+    def __init__(self, buffer: SampleBuffer, joint_count: int = 7, fps: int = 30,
+                 table: DHTable | None = None, parent=None) -> None:
         super().__init__(parent)
         self.buffer = buffer
         self.joint_count = joint_count
+        self.table = (table or DHTable()).copy()
         self.window_s = 10.0
         self.time_base = TIME_MCU
         self.paused = False
@@ -187,10 +201,10 @@ class ScopeWidget(QWidget):
         bar.addSpacing(8)
         bar.addWidget(QLabel("显示"))
         self.solo_combo = QComboBox()
-        self.solo_combo.addItem("全部三幅", None)
+        self.solo_combo.addItem("全部五幅", None)
         for g in GROUPS:
             self.solo_combo.addItem(f"只看 {GROUP_TITLE[g]}", g)
-        self.solo_combo.setToolTip("放大其中一幅图，占满三幅的面积；在图上双击也可以切换")
+        self.solo_combo.setToolTip("放大其中一幅图，占满全部绘图区；在图上双击也可以切换")
         self.solo_combo.currentIndexChanged.connect(lambda: self.set_solo(self.solo_combo.currentData()))
         bar.addWidget(self.solo_combo)
         bar.addStretch(1)
@@ -249,6 +263,13 @@ class ScopeWidget(QWidget):
                 c.setVisible(False)
                 self.plots[qmap[q.key].group].addItem(c)
                 self.curves[(j, q.key)] = c
+        self.pose_curves: dict[tuple[str, str, str], pg.PlotDataItem] = {}
+        for group, source, axis, index, color_index in POSE_SERIES:
+            name = f"{axis} {'实际' if source == 'actual' else '目标'}"
+            c = pg.PlotDataItem(name=name, pen=self._pose_pen(source, axis, color_index),
+                                skipFiniteCheck=True)
+            self.plots[group].addItem(c)
+            self.pose_curves[(group, source, axis)] = c
         self.selector.changed.connect(self._apply_selection)
         self.selector.color_changed.connect(self._recolor)
         self._apply_selection()
@@ -278,6 +299,18 @@ class ScopeWidget(QWidget):
         return pg.mkPen(self.selector.colors[j] if hasattr(self, "selector") else theme.JOINT_COLORS[j % 7],
                         width=1, style=Qt.DashLine if key in DASHED else Qt.SolidLine)
 
+    @staticmethod
+    def _pose_pen(source: str, axis: str, color_index: int):
+        color = QColor(theme.JOINT_COLORS[color_index % len(theme.JOINT_COLORS)])
+        if source == "target":
+            color.setAlpha(210)
+        return pg.mkPen(color, width=1, style=Qt.DashLine if source == "target" else Qt.SolidLine)
+
+    def set_table(self, table: DHTable) -> None:
+        """位姿曲线与三维视图使用同一份 DH/TCP；切换 DH 后历史波形按新模型重算。"""
+        self.table = table.copy()
+        self.refresh(force=True)
+
     def _recolor(self, j: int, _c: QColor) -> None:
         for q in QUANTITIES:
             self.curves[(j, q.key)].setPen(self._pen(j, q.key))
@@ -302,12 +335,12 @@ class ScopeWidget(QWidget):
             ax.showLabel(last)
 
     def set_solo(self, group: str | None) -> None:
-        """放大单幅图（占满原来三幅的面积），None 恢复三幅"""
+        """放大单幅图，None 恢复全部图"""
         if group == self.solo:
             return
         self.solo = group
         # 不把图移出布局（pyqtgraph 的 removeItem 会顺带移出场景，再加回来尺寸会错乱），
-        # 只隐藏其余两幅并把它们的高度压到 0，让可见的那幅占满
+        # 只隐藏其余图并把它们的高度压到 0，让可见的那幅占满
         lay = self.glw.ci.layout
         vis = self._visible_groups()
         for r, g in enumerate(GROUPS):
@@ -376,6 +409,12 @@ class ScopeWidget(QWidget):
         outside = x < x_raw[0] or x > x_raw[-1]
         qmap = {q.key: q for q in QUANTITIES}
         sel = self.selector.selected()
+        pose_at = None
+        if any(g in self._visible_groups() for g in ("position", "attitude")):
+            pose = self._compute_pose(v, np.array([i]))
+            if pose is not None:
+                pa, pt, ea, et = pose
+                pose_at = (pa[0], pt[0], ea[0], et[0])
         for g in GROUPS:
             visible = g in self._visible_groups()
             vl, ro = self.vlines[g], self.readouts[g]
@@ -393,6 +432,22 @@ class ScopeWidget(QWidget):
                 val = float(v.data[i, j, QKEYS.index(k)])
                 rows.append(f"<span style='color:{c}'>J{j} {q.label}</span>&nbsp;"
                             f"<span style='color:{theme.TEXT}'>{val:+.4f} {q.unit}</span>")
+            if g == "position" and pose_at is not None:
+                pa, pt, _ea, _et = pose_at
+                rows.append("<span style='color:" + theme.JOINT_COLORS[0] +
+                            "'>实际</span>&nbsp;X " + f"{pa[0]:+.4f}  Y {pa[1]:+.4f}  "
+                            f"Z {pa[2]:+.4f} m")
+                rows.append("<span style='color:" + theme.JOINT_COLORS[0] +
+                            "'>目标</span>&nbsp;X " + f"{pt[0]:+.4f}  Y {pt[1]:+.4f}  "
+                            f"Z {pt[2]:+.4f} m")
+            if g == "attitude" and pose_at is not None:
+                _pa, _pt, ea, et = pose_at
+                rows.append("<span style='color:" + theme.JOINT_COLORS[1] +
+                            "'>实际</span>&nbsp;R " + f"{ea[0]:+.2f}  P {ea[1]:+.2f}  "
+                            f"Y {ea[2]:+.2f}°")
+                rows.append("<span style='color:" + theme.JOINT_COLORS[1] +
+                            "'>目标</span>&nbsp;R " + f"{et[0]:+.2f}  P {et[1]:+.2f}  "
+                            f"Y {et[2]:+.2f}°")
             ro.setHtml("<div style='font-size:8pt; font-family:Consolas,monospace'>"
                        + "<br>".join(rows) + "</div>")
             vb = self.plots[g].getViewBox()
@@ -414,6 +469,8 @@ class ScopeWidget(QWidget):
                 self.legends[qmap[key[1]].group].addItem(c, c.name())
             else:
                 c.setData([], [])
+        for (group, _source, _axis), c in self.pose_curves.items():
+            self.legends[group].addItem(c, c.name())
         self.refresh(force=True)
 
     # ------------------------------------------------------------------ 交互
@@ -462,6 +519,32 @@ class ScopeWidget(QWidget):
             return self._frozen
         return self.buffer.view(self.window_s, self.time_base)
 
+    def _compute_pose(self, v: BufferView, indices: np.ndarray | None = None):
+        """按当前 DH + TCP 对实际角和目标角批量做 FK，返回位置/姿态四组曲线。"""
+        if self.table.n != v.joint_count:
+            return None
+        ai = QKEYS.index("angle_deg")
+        ti = QKEYS.index("target_deg")
+        data = v.data if indices is None else v.data[indices]
+        ra, pa = forward_poses_deg(self.table, data[:, :, ai])
+        rt, pt = forward_poses_deg(self.table, data[:, :, ti])
+        return pa, pt, self._rotations_to_euler(ra), self._rotations_to_euler(rt)
+
+    @staticmethod
+    def _rotations_to_euler(rot: np.ndarray) -> np.ndarray:
+        """向量化 Matrix_ToEuler，返回 (N,3) 的 roll/pitch/yaw deg。"""
+        if len(rot) == 0:
+            return np.empty((0, 3))
+        horizon = np.hypot(rot[:, 0, 0], rot[:, 1, 0])
+        pitch = np.arctan2(-rot[:, 2, 0], horizon)
+        roll = np.arctan2(rot[:, 2, 1], rot[:, 2, 2])
+        yaw = np.arctan2(rot[:, 1, 0], rot[:, 0, 0])
+        lock = horizon <= 1e-6
+        if np.any(lock):
+            roll[lock] = np.arctan2(-rot[lock, 1, 2], rot[lock, 1, 1])
+            yaw[lock] = 0.0
+        return np.degrees(np.column_stack((roll, pitch, yaw)))
+
     # ------------------------------------------------------------------ 刷新
     def refresh(self, force: bool = False) -> None:
         if self.paused and not force:
@@ -482,13 +565,13 @@ class ScopeWidget(QWidget):
         sel = self.selector.selected()
         vb = self._main_vb()
         i0, i1 = 0, len(x)
+        if self.paused:
+            # 只抽稀当前可见的那一段（左右各留一点余量，平移时边缘不空）
+            x0, x1 = vb.viewRange()[0]
+            pad = (x1 - x0) * 0.05
+            i0, i1 = np.searchsorted(x, (x0 - pad, x1 + pad))
+            i0, i1 = max(0, i0 - 1), min(len(x), i1 + 1)
         if sel:
-            if self.paused:
-                # 只抽稀当前可见的那一段（左右各留一点余量，平移时边缘不空）
-                x0, x1 = vb.viewRange()[0]
-                pad = (x1 - x0) * 0.05
-                i0, i1 = np.searchsorted(x, (x0 - pad, x1 + pad))
-                i0, i1 = max(0, i0 - 1), min(len(x), i1 + 1)
             jidx = np.fromiter((j for j, _ in sel), int, len(sel))
             qidx = np.fromiter((QKEYS.index(k) for _, k in sel), int, len(sel))
             ys = v.data[i0:i1, jidx, qidx]
@@ -496,6 +579,27 @@ class ScopeWidget(QWidget):
             xs, ys = decimate_minmax(x[i0:i1], ys, bins)
             for c, key in enumerate(sel):
                 self.curves[key].setData(xs, ys[:, c], skipFiniteCheck=True)
+        if "position" in self._visible_groups() or "attitude" in self._visible_groups():
+            bins = max(200, int(vb.width()) or 1000)
+            pose_step = max(1, (i1 - i0) // (2 * bins))
+            pose_idx = np.arange(i0, i1, pose_step, dtype=int)
+            if len(pose_idx) == 0 or pose_idx[-1] != i1 - 1:
+                pose_idx = np.append(pose_idx, i1 - 1)
+            pose_data = self._compute_pose(v, pose_idx)
+        else:
+            pose_idx = np.empty(0, dtype=int)
+            pose_data = None
+        if pose_data is not None:
+            pa, pt, ea, et = pose_data
+            pose_x = x[pose_idx]
+            for group, actual, target in (("position", pa, pt), ("attitude", ea, et)):
+                if group not in self._visible_groups():
+                    continue
+                for axis, _label, axis_index in POSE_AXES:
+                    self.pose_curves[(group, "actual", axis)].setData(
+                        pose_x, actual[:, axis_index], skipFiniteCheck=True)
+                    self.pose_curves[(group, "target", axis)].setData(
+                        pose_x, target[:, axis_index], skipFiniteCheck=True)
         # 十字光标读的是原始点；保存一份引用即可（view() 返回的本来就是拷贝）
         self._last_x = x
         self._last_v = v

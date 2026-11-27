@@ -23,7 +23,7 @@ COLUMNS = (("角度\ndeg", "angle_deg", "{:9.3f}"), ("目标\ndeg", "target_deg"
 
 _STATUS_OK = {MotorStatus.ENABLED}
 _STATUS_IDLE = {MotorStatus.DISABLED}
-POSE_ROWS = ("实际位姿", "目标位姿")
+POSE_ROWS = ("实际位姿", "目标位姿", "IK末端目标位姿")
 
 
 def status_text(v) -> tuple[str, str]:
@@ -85,7 +85,8 @@ class JointTable(QTableWidget):
             self.setItem(r, 0, it)
             self.setSpan(r, 0, 1, len(COLUMNS))
             vh = self.verticalHeaderItem(r)
-            vh.setForeground(QBrush(QColor(theme.OK if r == joint_count else theme.WARN)))
+            colors = (theme.OK, theme.WARN, theme.ACCENT)
+            vh.setForeground(QBrush(QColor(colors[r - joint_count])))
         self._stale = True
         self.setMinimumHeight(70)           # 放不下时表格自己出滚动条；写死 7 行高度会把窗口最小高度撑到 1000+
 
@@ -93,7 +94,7 @@ class JointTable(QTableWidget):
         now = time.monotonic()
         if s is None:
             self._set_stale(True)
-            self._set_pose_text("—", "—")
+            self._set_pose_text("—", "—", "—")
             return
         # host_time_ns 来自 time.monotonic_ns()，与这里的 now 同一时钟
         self._set_stale(now - s.host_time_ns * 1e-9 > self.STALE_S)
@@ -125,7 +126,10 @@ class JointTable(QTableWidget):
             return
         actual = self._pose_text(table, [j.angle_deg for j in s.joints])
         target = self._pose_text(table, [j.target_deg for j in s.joints])
-        self._set_pose_text(actual, target)
+        posture = s.posture
+        ik_target = (self._posture_pose_text(posture)
+                     if posture is not None and posture.target_pose_valid else "—")
+        self._set_pose_text(actual, target, ik_target)
 
     @staticmethod
     def _pose_text(table: DHTable, q_deg: list[float]) -> str:
@@ -138,9 +142,16 @@ class JointTable(QTableWidget):
         return (f"X={xyz[0]:+.4f} m   Y={xyz[1]:+.4f} m   Z={xyz[2]:+.4f} m"
                 f"    |    Roll={roll:+.3f}°   Pitch={pitch:+.3f}°   Yaw={yaw:+.3f}°")
 
-    def _set_pose_text(self, actual: str, target: str) -> None:
+    @staticmethod
+    def _posture_pose_text(posture) -> str:
+        return (f"X={posture.target_x:+.4f} m   Y={posture.target_y:+.4f} m   "
+                f"Z={posture.target_z:+.4f} m"
+                f"    |    Roll={posture.target_roll:+.3f}°   "
+                f"Pitch={posture.target_pitch:+.3f}°   Yaw={posture.target_yaw:+.3f}°")
+
+    def _set_pose_text(self, actual: str, target: str, ik_target: str) -> None:
         for r, txt in zip(range(self.joint_count, self.joint_count + len(POSE_ROWS)),
-                          (actual, target)):
+                          (actual, target, ik_target)):
             it = self.item(r, 0)
             if it.text() != txt:
                 it.setText(txt)

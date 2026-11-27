@@ -126,6 +126,7 @@ class TestPosePanel(unittest.TestCase):
         panel._initialized = True
         panel._plan_base_sequence = 0
         panel.method_box.setCurrentIndex(panel.method_box.findData(int(IkMethod.NUMERIC)))
+        panel._target_dirty = False
         posture = ArmPosture(
             0, PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK,
             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 93, 1, 0, 0)
@@ -215,6 +216,8 @@ class TestPosePanel(unittest.TestCase):
         self.assertAlmostEqual(got.rows[2].d_m, 0.123)
         self.assertEqual(got.base_xyz_m, table.base_xyz_m)
         self.assertEqual(got.base_rpy_deg, table.base_rpy_deg)
+        self.assertEqual(got.tool_xyz_m, device.tool_xyz_m)
+        self.assertEqual(got.tool_rpy_deg, device.tool_rpy_deg)
 
     def test_live_manual_and_dh_edit(self):
         cur = {"s": sample([0] * 7)}
@@ -224,7 +227,7 @@ class TestPosePanel(unittest.TestCase):
         pump(0.15)
         cur["s"] = sample([0, 90, 0, 0, 0, 0, 0])
         pump(0.15)
-        np.testing.assert_allclose(p.view.end_pose()[0], (-0.248, 0, 0.0626), atol=1e-6)
+        np.testing.assert_allclose(p.view.end_pose()[0], (-0.293, 0, 0.0626), atol=1e-6)
         # 手动模式：实时数据不再影响姿态
         p.src_manual.setChecked(True)
         p.sliders[0].setValue(900)
@@ -258,6 +261,32 @@ class TestPosePanel(unittest.TestCase):
         p.dh.set_table(DHTable(), emit=True)
         pump(0.2)
         p.grab().save(str(ROOT / "logs" / "pose_panel.png"))
+
+    def test_target_pose_overlay(self):
+        actual = [0, 20, -30, 10, 40, 15, -5]
+        posture = ArmPosture(target_valid=True, target_x=0.32, target_y=-0.18,
+                             target_z=0.44, target_roll=12.0, target_pitch=-7.0,
+                             target_yaw=33.0)
+        posture.target_meta_valid = True
+        sample = RobotSample(0, time.monotonic_ns(), 0, 7, 0, 0,
+                             tuple(JointRecord(angle_deg=a, target_deg=a) for a in actual),
+                             posture)
+        p = PosePanel(lambda: sample, table=DHTable())
+        p.resize(1200, 700)
+        p.show()
+        p.checks["show_target"].setChecked(True)
+        pump(0.15)
+        self.assertTrue(p.view.show_target)
+        self.assertTrue(p.view.target_valid)
+        actual_pos, _ = p.view.end_pose()
+        target_pos, _ = p.view.target_pose()
+        self.assertGreater(np.linalg.norm(target_pos - actual_pos), 1e-3)
+        self.assertIsNotNone(p.view.target_tcp_frame)
+        (ROOT / "logs").mkdir(exist_ok=True)
+        p.grab().save(str(ROOT / "logs" / "target_pose_overlay.png"))
+        p.close()
+        p.deleteLater()
+        pump(0.02)
 
     def test_workspace_overlay(self):
         p = PosePanel(lambda: sample([0] * 7), table=DHTable())

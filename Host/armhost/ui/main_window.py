@@ -110,7 +110,8 @@ class MonitorWindow(QMainWindow):
         tb.addWidget(self.release_btn)
 
         # ---------------------------------------------------------- 中央：波形 / 三维 / MuJoCo，关节表常驻下方
-        self.scope = ScopeWidget(self.ctrl.buffer, joint_count, fps=int(self.cfg["ui"]["scope_fps"]))
+        self.scope = ScopeWidget(self.ctrl.buffer, joint_count, fps=int(self.cfg["ui"]["scope_fps"]),
+                                 table=self._pose_fk_dh)
         i = self.scope.win_combo.findData(int(self.cfg["ui"]["default_window_s"]))
         if i >= 0:
             self.scope.win_combo.setCurrentIndex(i)
@@ -214,7 +215,7 @@ class MonitorWindow(QMainWindow):
         self.resizeDocks([self.tool_dock], [min(260, max(120, int(h * 0.26)))], Qt.Vertical)
         self.resizeDocks([self.status_dock], [min(330, max(140, int(w * 0.22)))], Qt.Horizontal)
         total = self.center_split.height()
-        # J0～J6 后新增实际/目标位姿两行；常规窗口默认完整显示 9 行，小屏仍允许滚动。
+        # J0～J6 后新增实际/目标/IK 末端目标位姿三行；常规窗口默认完整显示 10 行。
         want = min(self.table.rowCount() * 22 + 46, int(total * 0.4))
         self.center_split.setSizes([max(1, total - want), max(1, want)])
 
@@ -354,6 +355,7 @@ class MonitorWindow(QMainWindow):
 
     def _on_pose_table_applied(self, table) -> None:
         self._pose_fk_dh = table.copy()
+        self.scope.set_table(table)
         match = next((key for key, preset in self._dh_presets.items()
                       if self._same_dh(table, preset)), None)
         if match is None:

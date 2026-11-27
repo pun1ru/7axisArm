@@ -204,7 +204,7 @@ class IkPanel(QWidget):
         error_hint.setWordWrap(True)
         ag.addRow(error_hint)
 
-        target = QGroupBox("TCP 目标（夹爪中心 / 腰部连杆坐标系）")
+        target = QGroupBox("TCP 目标（工具坐标 / 腰部连杆坐标系）")
         grid = QGridLayout(target)
         self.fields: dict[str, ScaledSlider] = {}
         self.psi_range_label = QLabel(f"{_PSI_RANGE}：等待设备 DH / 关节限位")
@@ -279,7 +279,7 @@ class IkPanel(QWidget):
         buttons.addStretch(1)
 
         note = QLabel("IK 只保持进入时的当前分支；改变分支需先退出 IK、让实际构型进入新分支后再进入。"
-                      "x/y/z 是两根夹爪质心中点的 TCP，坐标轴沿用腕端 DH 系；"
+                      "x/y/z 是工具 TCP，坐标轴由当前 DH 与固定工具变换共同确定；"
                       "位姿和 ψ 会一起送入 S-R-S 解析逆解，解出的 7 个关节目标投入闭环。"
                       "自动 ψ 模式在当前分支的可行 ψ 中按 J0~J6 加权关节位移代价选择。"
                       "数值解会先计算整条关节轨迹，计算中机械臂保持不动，完成后自动执行。"

@@ -12,7 +12,7 @@ from armhost.protocol import MAX_FRAME, MAX_PAYLOAD, PROTO_VERSION, MsgType  # n
 from armhost.protocol.enums import (AckResult, EventCode, HostTargetAction, JointFlag, ParamType,  # noqa: E402
                                     StatusFlag)
 from armhost.protocol.msg_cmd import SET_HOST_TARGET_MULTI_TURN  # noqa: E402
-from armhost.protocol.msg_report import JointRecord, JointState, SystemStatus  # noqa: E402
+from armhost.protocol.msg_report import ArmPosture, JointRecord, JointState, SystemStatus  # noqa: E402
 from armhost.protocol.params import BY_NAME  # noqa: E402
 
 HEADER = (ROOT / "firmware_ref" / "arm_proto.h").read_text(encoding="utf-8")
@@ -86,6 +86,7 @@ class TestCHeaderSync(unittest.TestCase):
         self.assertEqual(int(sizes["ArmJointRecord_t"]), JointRecord.S.size)
         self.assertEqual(int(sizes["ArmMsgJointStateHead_t"]), JointState.H.size)
         self.assertEqual(int(sizes["ArmMsgSystemStatusHead_t"]), SystemStatus.H.size)
+        self.assertEqual(int(sizes["ArmMsgArmPosture_t"]), ArmPosture.S.size)
 
 
 if __name__ == "__main__":

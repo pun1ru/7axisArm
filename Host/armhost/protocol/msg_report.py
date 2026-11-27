@@ -115,6 +115,7 @@ class ArmPosture:
     """0 branch u8 | 1 flags u8 | 2 reserved u16 | 4 psi_deg f32
     8 x f32 | 12 y f32 | 16 z f32 | 20 roll f32 | 24 pitch f32 | 28 yaw f32
     32 plan_sequence u32 | 36 plan_steps u16 | 38 plan_exec_index u16
+    44 target_valid u8 | 48..71 原始 IK 末端 TCP 目标 xyz/rpy
 
     branch 为 0..7，0xFF 表示无效；flags 见 PostureFlag（bit6 = 自动 ψ）。位姿与
     JOINT_STATE / ForwardKinematics 使用同一坐标系（腰部连杆坐标系）。
@@ -122,7 +123,9 @@ class ArmPosture:
     TYPE: ClassVar[int] = MsgType.ARM_POSTURE
     LEGACY_S: ClassVar[struct.Struct] = struct.Struct("<BBHf6f")
     PLAN_META_SIZE: ClassVar[int] = 40
-    S: ClassVar[struct.Struct] = struct.Struct("<BBHf6fIHHBB2x")
+    PLAN_DETAIL_SIZE: ClassVar[int] = 42
+    TARGET_META_SIZE: ClassVar[int] = 72
+    S: ClassVar[struct.Struct] = struct.Struct("<BBHf6fIHHBB2xB3x6f")
     branch: int = 0xFF
     flags: PostureFlag | int = PostureFlag.NONE
     psi_deg: float = 0.0
@@ -138,8 +141,16 @@ class ArmPosture:
     plan_exec_index: int = 0
     plan_failure: int = 0
     plan_limit_mask: int = 0
+    target_valid: bool = False
+    target_x: float = 0.0
+    target_y: float = 0.0
+    target_z: float = 0.0
+    target_roll: float = 0.0
+    target_pitch: float = 0.0
+    target_yaw: float = 0.0
     plan_meta_valid: bool = field(default=False, compare=False, repr=False)
     plan_detail_valid: bool = field(default=False, compare=False, repr=False)
+    target_meta_valid: bool = field(default=False, compare=False, repr=False)
 
     def encode(self) -> bytes:
         return self.S.pack(self.branch & 0xFF, int(self.flags), self.plan_time_0_1ms & 0xFFFF,
@@ -147,7 +158,10 @@ class ArmPosture:
                            self.x, self.y, self.z, self.roll, self.pitch, self.yaw,
                            self.plan_sequence & 0xFFFFFFFF, self.plan_steps & 0xFFFF,
                            self.plan_exec_index & 0xFFFF,
-                           self.plan_failure & 0xFF, self.plan_limit_mask & 0xFF)
+                           self.plan_failure & 0xFF, self.plan_limit_mask & 0xFF,
+                           1 if self.target_valid else 0,
+                           self.target_x, self.target_y, self.target_z,
+                           self.target_roll, self.target_pitch, self.target_yaw)
 
     @classmethod
     def decode(cls, p: bytes) -> "ArmPosture":
@@ -157,16 +171,24 @@ class ArmPosture:
         meta_valid = False
         failure = limit_mask = 0
         detail_valid = False
+        target_valid = False
+        target_pose = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        target_meta_valid = False
         if len(p) >= cls.PLAN_META_SIZE:
             seq, steps, index = struct.unpack_from("<IHH", p, cls.LEGACY_S.size)
             meta_valid = True
-        if len(p) >= cls.S.size:
-            failure, limit_mask = struct.unpack_from("<BB", p, cls.S.size - 4)
+        if len(p) >= cls.PLAN_DETAIL_SIZE:
+            failure, limit_mask = struct.unpack_from("<BB", p, cls.PLAN_DETAIL_SIZE - 2)
             detail_valid = True
+        if len(p) >= cls.TARGET_META_SIZE:
+            target_valid = p[44] != 0
+            target_pose = struct.unpack_from("<6f", p, 48)
+            target_meta_valid = True
         out = cls(branch, PostureFlag(flags), psi, x, y, z, roll, pitch, yaw, plan_time,
-                  seq, steps, index, failure, limit_mask)
+                  seq, steps, index, failure, limit_mask, target_valid, *target_pose)
         out.plan_meta_valid = meta_valid
         out.plan_detail_valid = detail_valid
+        out.target_meta_valid = target_meta_valid
         return out
 
     @property
@@ -188,6 +210,10 @@ class ArmPosture:
     @property
     def plan_time_ms(self) -> float:
         return self.plan_time_0_1ms / 10.0
+
+    @property
+    def target_pose_valid(self) -> bool:
+        return self.target_meta_valid and self.target_valid
 
 
 @dataclass(slots=True)

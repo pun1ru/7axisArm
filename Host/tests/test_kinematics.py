@@ -11,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np  # noqa: E402
 
 from armhost.kinematics import (ARMSIM_MAIN, BIGARM_BASE_RPY_DEG, BIGARM_BASE_XYZ_M, BIGARM_DH,  # noqa: E402
-                                BIGARM_TCP_XYZ_M, BUILTIN_DH, FIRMWARE_MODULE_INIT, DHRow, DHTable,
+                                BIGARM_TCP_XYZ_M, BUILTIN_DH, FIRMWARE_MODULE_INIT,
+                                FIRMWARE_TCP_RPY_DEG, FIRMWARE_TCP_XYZ_M, DHRow, DHTable,
                                 current_dh, default_dh, euler_zyx_deg, forward_frames, forward_tcp,
                                 link_transform)
 
@@ -24,6 +25,8 @@ class TestDH(unittest.TestCase):
         self.assertEqual(t.n, 7)
         self.assertEqual([r.as_tuple() for r in t.rows], [r.as_tuple() for r in BUILTIN_DH],
                          "固件 DH 改了，同步 armhost/kinematics/dh.py 的 BUILTIN_DH")
+        self.assertEqual(t.tool_xyz_m, FIRMWARE_TCP_XYZ_M)
+        self.assertEqual(t.tool_rpy_deg, FIRMWARE_TCP_RPY_DEG)
         self.assertIn("module_init", default_dh().source)
 
     def test_parse_variants(self):

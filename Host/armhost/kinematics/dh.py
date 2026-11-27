@@ -57,6 +57,8 @@ BIGARM_DH = (
     DHRow(90.0, 0.0, 0.0, -148.8585943),
     DHRow(90.0, 0.0, 0.0, 0.0),
 )
+FIRMWARE_TCP_XYZ_M = (0.0, 0.0, -0.045)
+FIRMWARE_TCP_RPY_DEG = (0.0, -90.0, 0.0)
 BIGARM_BASE_XYZ_M = (0.000558840342, -0.0208529944, 0.038)
 BIGARM_BASE_RPY_DEG = (90.0, -90.0, 0.0)
 # link8 -> TCP。TCP 原点取两根夹爪质心的中点（robot_fixed.urdf 的两个
@@ -73,8 +75,8 @@ class DHTable:
     base_xyz_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     base_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
     # DH 末端（link8）-> TCP（夹爪中心）的固定工具变换
-    tool_xyz_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    tool_rpy_deg: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    tool_xyz_m: tuple[float, float, float] = FIRMWARE_TCP_XYZ_M
+    tool_rpy_deg: tuple[float, float, float] = FIRMWARE_TCP_RPY_DEG
 
     @property
     def n(self) -> int:
@@ -113,9 +115,12 @@ class DHTable:
         if len(xyz) != 3 or len(rpy) != 3:
             raise ValueError("base.xyz_m / base.rpy_deg 必须各含 3 个数")
         tool = d.get("tool")
-        if tool is None and [r.as_tuple() for r in rows] == [r.as_tuple() for r in BIGARM_DH]:
-            # 兼容旧版 dh.json：BigArm 配置没有 tool 字段时自动补上夹爪中心。
-            tool_xyz, tool_rpy = BIGARM_TCP_XYZ_M, BIGARM_TCP_RPY_DEG
+        if tool is None:
+            # 兼容旧版 dh.json：按 DH 结构补齐对应的 TCP。
+            if [r.as_tuple() for r in rows] == [r.as_tuple() for r in BIGARM_DH]:
+                tool_xyz, tool_rpy = BIGARM_TCP_XYZ_M, BIGARM_TCP_RPY_DEG
+            else:
+                tool_xyz, tool_rpy = FIRMWARE_TCP_XYZ_M, FIRMWARE_TCP_RPY_DEG
         else:
             tool = tool or {}
             tool_xyz = tuple(float(v) for v in tool.get("xyz_m", (0.0, 0.0, 0.0)))
@@ -147,7 +152,8 @@ class DHTable:
             found[int(m.group(1))] = DHRow(*nums)
         if not found or sorted(found) != list(range(len(found))):
             raise ValueError(f"{path} 里没有连续的 ARM_DH_J0.. 定义")
-        return cls([found[i] for i in range(len(found))], "单片机工程 module_init.c")
+        return cls([found[i] for i in range(len(found))], "单片机工程 module_init.c",
+                   tool_xyz_m=FIRMWARE_TCP_XYZ_M, tool_rpy_deg=FIRMWARE_TCP_RPY_DEG)
 
     @classmethod
     def from_armsim_source(cls, path: str | Path = ARMSIM_MAIN) -> "DHTable":

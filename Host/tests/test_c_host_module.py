@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from armhost.protocol import (ArmState, JointFlag, JointRecord, JointState, MotorStatus, MsgType,  # noqa: E402
+from armhost.protocol import (ArmPosture, ArmState, JointFlag, JointRecord, JointState, MotorStatus, MsgType,  # noqa: E402
                               StatusFlag, encode_frame, FrameParser, decode_frame)
 from armhost.protocol.crc import crc8, crc16  # noqa: E402
 from armhost.protocol.msg_report import JointRecord as JR  # noqa: E402
@@ -47,6 +47,7 @@ class TestHostModuleSync(unittest.TestCase):
         self.assertEqual(macro("HOST_FRAME_HEADER_SIZE"), 9)
         self.assertEqual(macro("HOST_FRAME_TRAILER_SIZE"), 2)
         self.assertEqual(macro("HOST_MSG_JOINT_STATE"), int(MsgType.JOINT_STATE))
+        self.assertEqual(macro("HOST_MSG_ARM_POSTURE"), int(MsgType.ARM_POSTURE))
         # 帧头字段偏移：SOF0 SOF1 VER TYPE SEQ(2) LEN FLAGS HCRC
         offs = {n: macro(f"HOST_OFFSET_{n}") for n in
                 ("SOF0", "SOF1", "VERSION", "TYPE", "SEQUENCE", "LENGTH", "FLAGS", "HEADER_CRC")}
@@ -66,6 +67,11 @@ class TestHostModuleSync(unittest.TestCase):
                            "ERROR_ID", "TEMP", "FLAGS", "FEEDBACK")],
                          [0, 4, 8, 12, 16, 20, 22, 23, 24, 25, 26])
         self.assertEqual(macro("HOST_CMD_AGE_NONE"), 0xFFFF)
+        self.assertEqual(macro("HOST_ARM_POSTURE_SIZE"), ArmPosture.S.size)
+        self.assertEqual([macro(f"HOST_POSTURE_OFFSET_{n}") for n in
+                          ("BRANCH", "FLAGS", "PSI", "X", "ROLL", "TARGET_VALID",
+                           "TARGET_X", "TARGET_ROLL", "TARGET_YAW")],
+                         [0, 1, 4, 8, 20, 44, 48, 60, 68])
 
     def test_flags_and_fixed_size(self):
         self.assertEqual(macro("HOST_FLAG_RC_ONLINE"), int(StatusFlag.RC_ONLINE))

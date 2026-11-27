@@ -19,7 +19,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
-from ..kinematics import DHTable, euler_zyx_deg, forward_frames
+from ..kinematics import DHTable, euler_zyx_deg, forward_frames, transform_from_xyz_rpy_deg
 from . import theme
 
 AXIS_COLORS = (QColor("#ef5350"), QColor("#66bb6a"), QColor("#42a5f5"))   # x y z
@@ -39,6 +39,11 @@ class View3D(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.table = table or DHTable()
         self.q_deg = np.zeros(self.table.n)
+        self.target_q_deg: np.ndarray | None = None
+        self.target_pose_base: np.ndarray | None = None
+        self.target_frames: list[np.ndarray] = []
+        self.target_tcp_frame: np.ndarray | None = None
+        self.target_valid = False
         self.frames: list[np.ndarray] = forward_frames(self.table, self.q_deg)
         self.tcp_frame: np.ndarray = self.frames[-1] @ self.table.tool_transform
         # 开关
@@ -48,6 +53,7 @@ class View3D(QWidget):
         self.show_axes_line = True                # 关节转轴（沿 z_i 的短线）
         self.show_labels = True
         self.show_tcp = True
+        self.show_target = False
         self.show_grid = True
         self.show_world = True
         self.world_mount = True                    # 显示时叠加 URDF joint1 的腰部安装变换
@@ -78,6 +84,8 @@ class View3D(QWidget):
         self.table = table
         if len(self.q_deg) != table.n:
             self.q_deg = np.resize(self.q_deg, table.n)
+        if self.target_q_deg is not None and len(self.target_q_deg) != table.n:
+            self.target_q_deg = np.resize(self.target_q_deg, table.n)
         if len(self.frame_mask) != table.n + 1:
             self.frame_mask = (self.frame_mask + [True] * (table.n + 1))[: table.n + 1]
         self._recompute()
@@ -88,6 +96,39 @@ class View3D(QWidget):
             return
         self.q_deg = np.resize(q, self.table.n)
         self._recompute()
+
+    def set_target_angles(self, q_deg) -> None:
+        """设置目标关节角；None 表示当前数据源没有可显示的目标构型。"""
+        if q_deg is None:
+            if self.target_q_deg is None:
+                return
+            self.target_q_deg = None
+            self.target_pose_base = None
+            self.target_frames = []
+            self.target_tcp_frame = None
+            self.target_valid = False
+            self._dirty = True
+            return
+        q = np.asarray(q_deg, dtype=float)[: self.table.n]
+        if self.target_q_deg is not None and q.shape == self.target_q_deg.shape \
+                and np.array_equal(q, self.target_q_deg):
+            return
+        self.target_q_deg = np.resize(q, self.table.n)
+        self.target_pose_base = None
+        self._recompute()
+
+    def set_target_pose_deg(self, x: float, y: float, z: float,
+                            roll: float, pitch: float, yaw: float) -> None:
+        """直接设置腰部连杆坐标系中的原始 IK 末端 TCP 目标位姿。"""
+        self.target_q_deg = None
+        self.target_pose_base = transform_from_xyz_rpy_deg(x, y, z, roll, pitch, yaw)
+        self._recompute()
+
+    def target_pose(self) -> tuple[np.ndarray, tuple[float, float, float]] | None:
+        if not self.target_valid or self.target_tcp_frame is None:
+            return None
+        T = self.target_tcp_frame
+        return T[:3, 3].copy(), euler_zyx_deg(T[:3, :3])
 
     def set_option(self, name: str, value) -> None:
         if name == "world_mount":
@@ -157,19 +198,29 @@ class View3D(QWidget):
         self.yaw, self.pitch = VIEWS.get(name, VIEWS["iso"])
         reach = sum(abs(r.a_m) + abs(r.d_m) for r in self.table.rows) or 0.3
         self.dist = max(0.25, reach * 2.6)
-        origins = np.array([T[:3, 3] for T in self.frames] + [self.tcp_frame[:3, 3]])
+        origins = [T[:3, 3] for T in self.frames] + [self.tcp_frame[:3, 3]]
+        if self.show_target and self.target_valid:
+            origins += [T[:3, 3] for T in self.target_frames] + [self.target_tcp_frame[:3, 3]]
+        origins = np.array(origins)
         self.target = 0.5 * (origins.min(axis=0) + origins.max(axis=0))
         self._dirty = True
 
     def _recompute(self) -> None:
-        frames = forward_frames(self.table, self.q_deg)
+        base = self.table.base_transform if self.world_mount else np.eye(4)
+        frames = [base @ T for T in forward_frames(self.table, self.q_deg)]
         tcp = frames[-1] @ self.table.tool_transform
-        if self.world_mount:
-            base = self.table.base_transform
-            frames = [base @ T for T in frames]
-            tcp = base @ tcp
+        target_frames = []
+        target_tcp = None
+        if self.target_pose_base is not None:
+            target_tcp = base @ self.target_pose_base
+        elif self.target_q_deg is not None:
+            target_frames = [base @ T for T in forward_frames(self.table, self.target_q_deg)]
+            target_tcp = target_frames[-1] @ self.table.tool_transform
         self.frames = frames
         self.tcp_frame = tcp
+        self.target_frames = target_frames
+        self.target_tcp_frame = target_tcp
+        self.target_valid = target_tcp is not None
         self._dirty = True
 
     def _visible_workspace_points(self) -> np.ndarray:
@@ -252,6 +303,24 @@ class View3D(QWidget):
         if self.world_mount and np.linalg.norm(F[0][:3, 3]) > 1e-6:
             pen = QPen(QColor(255, 255, 255, 55), 2, Qt.DashLine)
             add((0, 0, 0), F[0][:3, 3], pen)
+        if self.show_target and self.target_valid:
+            Ft = self.target_frames
+            target_pen = QPen(QColor(96, 165, 250, 105), 6, Qt.DashLine, Qt.RoundCap)
+            target_tcp_pen = QPen(QColor(96, 165, 250, 135), 5, Qt.SolidLine, Qt.RoundCap)
+            target_origins = np.array([T[:3, 3] for T in Ft])
+            if self.show_links and len(target_origins):
+                for i in range(len(target_origins) - 1):
+                    if np.linalg.norm(target_origins[i + 1] - target_origins[i]) > 1e-6:
+                        add(target_origins[i], target_origins[i + 1], target_pen)
+                if np.linalg.norm(self.target_tcp_frame[:3, 3] - target_origins[-1]) > 1e-6:
+                    add(target_origins[-1], self.target_tcp_frame[:3, 3], target_tcp_pen)
+            if self.show_frames:
+                T = self.target_tcp_frame
+                for a in range(3):
+                    color = QColor(AXIS_COLORS[a])
+                    color.setAlpha(85)
+                    add(T[:3, 3], T[:3, 3] + T[:3, a] * self.frame_len * 1.4,
+                        QPen(color, 2, Qt.DashLine))
         origins = np.array([T[:3, 3] for T in F])
         # 连杆：相邻且不重合的原点之间画长杆
         if self.show_links:
@@ -335,6 +404,13 @@ class View3D(QWidget):
             p.setBrush(QColor("#2e7d32"))
             p.drawEllipse(QPointF(*tcp_scr[0]), 5.5, 5.5)
             p.drawText(QPointF(tcp_scr[0][0] + 9, tcp_scr[0][1] - 7), "TCP")
+        if self.show_target and self.target_valid:
+            target_scr, _ = project(np.array([self.target_tcp_frame[:3, 3]]))
+            if self.show_labels and not np.isnan(target_scr[0]).any():
+                p.setPen(QColor(147, 197, 253, 220))
+                p.setBrush(QColor(59, 130, 246, 90))
+                p.drawEllipse(QPointF(*target_scr[0]), 5.0, 5.0)
+                p.drawText(QPointF(target_scr[0][0] + 9, target_scr[0][1] + 14), "目标 TCP")
         if self.show_workspace and len(self._visible_workspace_points()):
             self._draw_workspace_end(p, project)
         self._draw_hud(p)
@@ -387,6 +463,13 @@ class View3D(QWidget):
             T_dh = np.linalg.inv(self.table.base_transform) @ self.tcp_frame
             p_dh = T_dh[:3, 3]
             lines.append(f"TCP(DH) x {p_dh[0] * 1e3:+8.1f}  y {p_dh[1] * 1e3:+8.1f}  z {p_dh[2] * 1e3:+8.1f} mm")
+        target_pose = self.target_pose()
+        if self.show_target and target_pose is not None:
+            target_pos, (target_r, target_pi, target_y) = target_pose
+            lines.append(f"目标 TCP x {target_pos[0] * 1e3:+8.1f}  y {target_pos[1] * 1e3:+8.1f}  "
+                         f"z {target_pos[2] * 1e3:+8.1f} mm")
+            lines.append(f"         roll {target_r:+7.1f}  pitch {target_pi:+7.1f}  "
+                         f"yaw {target_y:+7.1f} °")
         lines.append(f"DH：{self.table.source}")
         if self.show_workspace and self.workspace_info:
             lines.append(self.workspace_info)

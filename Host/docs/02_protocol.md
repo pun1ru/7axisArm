@@ -149,23 +149,28 @@ SET 从 HOST 进入 HOST_IK，或保持 HOST_IK 更新目标。进入时请求�
 `Σ cost_weight[i] · (q_i - q_prev_i)²`，其中 `q_i` 是映射后的多圈关节目标，`q_prev_i` 是本次更新前已锁存的多圈关节目标，差值不做环绕。选择代价最小的 ψ，
 并继续使用当前分支。旧 32 B 帧按手动 ψ、权重全 1 处理。
 
-### 0x13 ARM_POSTURE（44 B）
+### 0x13 ARM_POSTURE（72 B）
 | 偏移 | 类型 | 字段 | 说明 |
 |---|---|---|---|
 | 0 | u8 | branch | 当前分支 0~7；0xFF 无效 |
 | 1 | u8 | flags | bit0 ψ 有效，bit1 肩奇异，bit2 腕奇异，bit3 IK 闭环中，bit4~5 IK 状态（0 OK / 1 不可达 / 2 参考平面退化 / 3 数值轨迹规划中），bit6 当前使用自动 ψ，bit7 数值解 |
 | 2 | u16 | plan_time | 最近一次数值轨迹规划 CPU 耗时，单位 0.1 ms；0 表示尚未规划 |
 | 4 | f32 | psi_deg | 当前臂角 ψ |
-| 8 | f32 × 3 | x / y / z | 当前 TCP（夹爪中心）位置 m |
+| 8 | f32 × 3 | x / y / z | 当前实际 TCP 位置 m |
 | 20 | f32 × 3 | roll / pitch / yaw | 当前 TCP 欧拉角 deg，Z-Y-X |
 | 32 | u32 | plan_sequence | 数值规划序号，每次开始新规划递增 |
 | 36 | u16 | plan_steps | 已预计算并缓存的有效关节轨迹点总数 |
 | 38 | u16 | plan_exec_index | 已执行的轨迹点数量；等于 plan_steps 表示轨迹播放完毕 |
 | 40 | u8 | plan_failure | 0 无 / 1 DLS 求解失败 / 2 限位、奇异或局部极小停滞 / 3 超过最大迭代 |
 | 41 | u8 | plan_limit_mask | bit i = 规划停止时第 i 关节仍在限位/约束边界 |
+| 42~43 | u8 × 2 | reserved | 保留 |
+| 44 | u8 | target_valid | 原始 IK 末端目标位姿是否有效 |
+| 45~47 | u8 × 3 | target_reserved | 保留 |
+| 48 | f32 × 3 | target_x / target_y / target_z | 原始 IK 末端 TCP 目标位置 m |
+| 60 | f32 × 3 | target_roll / target_pitch / target_yaw | 原始 IK 末端 TCP 目标欧拉角 deg |
 
 Host 仍兼容旧 32 B 帧，但旧帧没有 `plan_sequence/plan_steps/plan_exec_index`，因此不能可靠判断
-“无需运动”或轨迹执行进度。使用数值预规划时必须启动同步更新后的 ArmSim。
+“无需运动”或轨迹执行进度。旧 44 B 帧也没有原始 IK 末端目标；新上位机可继续读取，但三维目标行会显示无效。
 
 ### 0x30 EXCHANGE_COMMAND（40 B，ArmSim 扩展）
 

@@ -226,18 +226,23 @@ class TestMessages(unittest.TestCase):
             SetIkTarget(HostIkAction.SET, 8).encode()
 
         posture = ArmPosture(5, PostureFlag.VALID | PostureFlag.IK_ACTIVE, 12.5,
-                             0.125, -0.25, 0.375, 4.5, 5.5, 6.5)
+                             0.125, -0.25, 0.375, 4.5, 5.5, 6.5,
+                             target_valid=True, target_x=0.25, target_y=-0.5,
+                             target_z=0.75, target_roll=8.0, target_pitch=8.0,
+                             target_yaw=9.0)
         payload = posture.encode()
-        self.assertEqual(len(payload), 44)
+        self.assertEqual(len(payload), 72)
         got = decode_payload(MsgType.ARM_POSTURE, payload)
         self.assertEqual(got, posture)
         self.assertTrue(got.valid)
         self.assertTrue(got.ik_active)
+        self.assertTrue(got.target_pose_valid)
         legacy = posture.LEGACY_S.pack(5, int(PostureFlag.VALID | PostureFlag.IK_ACTIVE),
                                        0, 12.5, 0.125, -0.25, 0.375, 4.5, 5.5, 6.5)
         old = decode_payload(MsgType.ARM_POSTURE, legacy)
         self.assertEqual((old.plan_sequence, old.plan_steps, old.plan_exec_index), (0, 0, 0))
         self.assertFalse(old.plan_meta_valid)
+        self.assertFalse(old.target_pose_valid)
 
         planning = ArmPosture(
             5, PostureFlag(int(PostureFlag.VALID | PostureFlag.IK_ACTIVE | PostureFlag.NUMERIC_IK)

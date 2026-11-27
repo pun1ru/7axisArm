@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from armhost.model.backend import MockBackend  # noqa: E402
 from armhost.model.state import RobotSample  # noqa: E402
-from armhost.protocol import ArmState  # noqa: E402
+from armhost.protocol import ArmPosture, ArmState, PostureFlag  # noqa: E402
 from armhost.protocol.msg_report import JointRecord  # noqa: E402
 from armhost.protocol.enums import IkMethod  # noqa: E402
 from armhost.ui import theme  # noqa: E402
@@ -162,9 +162,9 @@ class TestWindowLayout(unittest.TestCase):
         self.assertEqual(inner, ["IK 闭环", "兑换站"])
 
     def test_joint_table_has_actual_and_target_pose_rows(self):
-        self.assertEqual(self.w.table.rowCount(), 9)
-        self.assertEqual([self.w.table.verticalHeaderItem(i).text() for i in (7, 8)],
-                         ["实际位姿", "目标位姿"])
+        self.assertEqual(self.w.table.rowCount(), 10)
+        self.assertEqual([self.w.table.verticalHeaderItem(i).text() for i in (7, 8, 9)],
+                         ["实际位姿", "目标位姿", "IK末端目标位姿"])
 
     def test_dh_preset_switch_updates_pose_table(self):
         w = self.w
@@ -180,6 +180,8 @@ class TestWindowLayout(unittest.TestCase):
                          [r.as_tuple() for r in bigarm.rows])
         self.assertEqual([r.as_tuple() for r in w.pose.workspace._table.rows],
                          [r.as_tuple() for r in bigarm.rows])
+        self.assertEqual(w.scope.table.tool_xyz_m, bigarm.tool_xyz_m)
+        self.assertEqual(w.scope.table.tool_rpy_deg, bigarm.tool_rpy_deg)
 
 
 class TestJointPoseRows(unittest.TestCase):
@@ -210,6 +212,23 @@ class TestJointPoseRows(unittest.TestCase):
                       f"Z={target_xyz[2]:+.4f} m", target_text)
         self.assertIn("Roll=", actual_text)
         self.assertNotEqual(actual_text, target_text)
+        widget.deleteLater()
+
+    def test_raw_ik_target_pose_has_third_row(self):
+        from armhost.kinematics import DHTable
+
+        widget = JointTable(7, table_provider=lambda: DHTable())
+        posture = ArmPosture(target_valid=True, target_x=0.125, target_y=-0.25,
+                             target_z=0.375, target_roll=4.0, target_pitch=5.0,
+                             target_yaw=6.0)
+        posture.target_meta_valid = True
+        sample = RobotSample(1, 1, 0, ArmState.HOST_IK, 0, 0,
+                             tuple(JointRecord(angle_deg=0.0, target_deg=0.0) for _ in range(7)),
+                             posture)
+        widget.update_sample(sample)
+        text = widget.item(9, 0).text()
+        self.assertIn("X=+0.1250 m", text)
+        self.assertIn("Roll=+4.000°", text)
         widget.deleteLater()
 
 
@@ -518,8 +537,26 @@ class TestMonitorWindow(unittest.TestCase):
         (ROOT / "logs").mkdir(exist_ok=True)
         self.w.grab().save(str(ROOT / "logs" / "ui_solo.png"))
 
+    def test_tcp_position_and_attitude_plots_have_actual_and_target(self):
+        s = self.w.scope
+        self._fill(600)
+        s.refresh(force=True)
+        self.assertIn("position", s.plots)
+        self.assertIn("attitude", s.plots)
+        self.assertEqual(s.solo_combo.itemText(0), "全部五幅")
+        for group in ("position", "attitude"):
+            for source in ("actual", "target"):
+                for axis in ("x", "y", "z"):
+                    x, y = s.pose_curves[(group, source, axis)].getData()
+                    self.assertIsNotNone(x)
+                    self.assertGreater(len(x), 0)
+        s._mouse_x = -1.0
+        s._update_crosshair()
+        self.assertIn("实际", s.readouts["position"].textItem.toHtml())
+        self.assertIn("目标", s.readouts["attitude"].textItem.toHtml())
+
     def test_refresh_cost(self):
-        """一次刷新（全部 35 条曲线、60 s @ 500 Hz 缓存）的耗时，保证不拖慢 GUI"""
+        """一次刷新（全部 47 条曲线、60 s @ 500 Hz 缓存）的耗时，保证不拖慢 GUI"""
         w = self.w
         from armhost.model.state import RobotSample
         from armhost.protocol import JointRecord
@@ -535,7 +572,7 @@ class TestMonitorWindow(unittest.TestCase):
             w.scope.refresh(force=True)
             QCoreApplication.processEvents()
         dt = (time.perf_counter() - t0) / 10
-        print(f"\n  refresh 35 curves x 30000 pts: {dt * 1e3:.1f} ms/frame")
+        print(f"\n  refresh 47 curves x 30000 pts: {dt * 1e3:.1f} ms/frame")
         self.assertLess(dt, 0.1)
 
 

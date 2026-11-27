@@ -4,11 +4,14 @@
  * 命令（stdin 逐行）：
  *   cfg  gravity_enable use_beta sign mask  gain_kp pid_max total_max  配置并 Arm_Init，pi/beta/DH 在驱动里写死
  *   state N                                                       Arm_SetState
+ *   role N                                                       修改角色，用于检查状态集合
  *   q    q0..q6                                                   写反馈角（deg，同时作为 multi 与 abs）
  *   host joint target closed                                      Arm_SetHostTarget
  *   stop                                                          Arm_StopHostControl
+ *   rc ch0 ch1 ch2 ch3 ch4                                        Arm_SetRcInput
  *   run                                                           Arm_Run 一次，输出 7 个力矩 + 7 个 torque_cmd + model_valid
  *   dump                                                          输出 target_deg
+ *   ikdump                                                        输出 TCP 当前/目标和 ARM_IK 输入状态
  */
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +19,7 @@
 
 #include "arm.h"
 #include "arm_jointctrl.h"
+#include "arm_kinematics.h"
 
 static const float PI28[28] = {
     +0.00000f, +0.00000f, -0.00000f, +0.00000f,
@@ -105,6 +109,8 @@ int main(void)
             c.param.gravity.g = 9.81f;
             c.param.gravity.pi = PI28;
             c.param.gravity.beta = BETA12;
+            IkNumeric_DefaultParam(&c.param.ik.numeric);
+            for (unsigned i = 0; i < ARM_JOINT_COUNT; ++i) c.param.ik.weight[i] = 1.0f;
             Arm_Init(&g_arm, &c);
         }
         else if (strcmp(cmd, "state") == 0)
@@ -112,6 +118,12 @@ int main(void)
             int s;
             if (scanf("%d", &s) != 1) return 2;
             printf("ok %d\n", Arm_SetState(&g_arm, (ArmState_t)s) ? 1 : 0);
+        }
+        else if (strcmp(cmd, "role") == 0)
+        {
+            int role;
+            if (scanf("%d", &role) != 1) return 2;
+            g_arm.config.state.role = (ArmRole_t)role;
         }
         else if (strcmp(cmd, "q") == 0)
         {
@@ -136,6 +148,13 @@ int main(void)
             int ch1, ch4;
             if (scanf("%d %d", &ch1, &ch4) != 2) return 2;
             Arm_SetTestInput(&g_arm, (int16_t)ch1, (int16_t)ch4);
+        }
+        else if (strcmp(cmd, "rc") == 0)
+        {
+            int ch0, ch1, ch2, ch3, ch4;
+            if (scanf("%d %d %d %d %d", &ch0, &ch1, &ch2, &ch3, &ch4) != 5) return 2;
+            Arm_SetRcInput(&g_arm, (int16_t)ch0, (int16_t)ch1, (int16_t)ch2,
+                           (int16_t)ch3, (int16_t)ch4);
         }
         else if (strcmp(cmd, "mode") == 0)
         {
@@ -171,6 +190,32 @@ int main(void)
         {
             printf("%u %u %u\n", g_arm.test.selected_joint, g_arm.test.ch4_switch_armed,
                    g_arm.test.align_pending);
+        }
+        else if (strcmp(cmd, "ikdump") == 0)
+        {
+            printf("%u %u %u %u |", g_arm.ik.active, g_arm.ik_rc.attitude_mode,
+                   g_arm.ik_rc.ch4_switch_armed, g_arm.ik_rc.align_pending);
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i)
+                printf(" %.9g", g_arm.observer.tcp_position_m[i]);
+            printf(" |");
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i)
+                printf(" %.9g", g_arm.ik_rc.target_position_m[i]);
+            printf(" |");
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i)
+                printf(" %.9g", g_arm.observer.tcp_euler_deg[i]);
+            printf(" |");
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i)
+                printf(" %.9g", g_arm.ik_rc.target_euler_deg[i]);
+            printf("\n");
+        }
+        else if (strcmp(cmd, "rawik") == 0)
+        {
+            float pos[ARM_VECTOR_DIM], euler[ARM_VECTOR_DIM];
+            int ok = Arm_GetIkTargetTcpPose(&g_arm, pos, euler) ? 1 : 0;
+            printf("%d", ok);
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i) printf(" %.9g", pos[i]);
+            for (unsigned i = 0; i < ARM_VECTOR_DIM; ++i) printf(" %.9g", euler[i]);
+            printf("\n");
         }
         else if (strcmp(cmd, "dumpcmd") == 0)
         {

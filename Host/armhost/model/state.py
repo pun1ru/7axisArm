@@ -63,8 +63,14 @@ QUANTITIES: tuple[Quantity, ...] = (
     Quantity("torque_cmd_nm", "指令力矩", "N·m", "torque"),
 )
 QKEYS = tuple(q.key for q in QUANTITIES)
-GROUPS = ("angle", "velocity", "torque")
-GROUP_TITLE = {"angle": "角度 (deg)", "velocity": "角速度 (deg/s)", "torque": "力矩 (N·m)"}
+GROUPS = ("angle", "velocity", "torque", "position", "attitude")
+GROUP_TITLE = {
+    "angle": "角度 (deg)",
+    "velocity": "角速度 (deg/s)",
+    "torque": "力矩 (N·m)",
+    "position": "TCP 位置 (m)",
+    "attitude": "TCP 姿态 (deg)",
+}
 
 TIME_MCU = "mcu"
 TIME_HOST = "host"

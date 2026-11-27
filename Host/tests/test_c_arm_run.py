@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from armhost.kinematics import DHTable  # noqa: E402
+from armhost.kinematics import DHTable, euler_zyx_deg, forward_frames  # noqa: E402
 from armhost.model.gravity_fit import gravity_regressor  # noqa: E402
 from test_c_gravity import PI_USER, _find_vcvars  # noqa: E402
 
@@ -39,7 +39,7 @@ SRC = [FW / "Module" / "Arm" / n for n in ("arm.c", "arm_ik.c", "arm_jointctrl.c
 INC = [STUB, FW / "Module" / "Arm", FW / "Algorithm" / "Kinematics", FW / "Algorithm" / "Math",
        FW / "Algorithm" / "Control" / "PID", FW / "Drivers" / "Motor"]
 
-PROTECTED, ENABLE, HOST, TEST = 0, 1, 6, 8
+PROTECTED, ENABLE, HOST, IK, TEST = 0, 1, 6, 7, 8
 
 
 def build(out: Path, output_flag: int = 1) -> bool:
@@ -96,6 +96,12 @@ def gravity_ref(q_deg):
 
 
 Q = [0.0, -30.0, 40.0, -50.0, 20.0, 10.0, 5.0]      # 限位内的一般位形
+END_TO_TCP = np.array([
+    [0.0, 0.0, -1.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [1.0, 0.0, 0.0, -0.045],
+    [0.0, 0.0, 0.0, 1.0],
+])
 
 
 class TestArmRunGravity(unittest.TestCase):
@@ -333,6 +339,77 @@ class TestArmRunGravity(unittest.TestCase):
         lines.append("testdump")
         out = self.session(lines, omax=5.0)
         self.assertEqual(out[-1], "0 0 0")
+
+    def test_rc_ik_first_entry_aligns_current_tcp_without_motion(self):
+        out = self.session([
+            "state 7", q_line(Q), "run", "dump", "ikdump", "rawik",
+        ], omax=5.0)
+        self.assertEqual(out[0], "ok 1")
+        targets = np.array(out[-3].split(), float)
+        np.testing.assert_allclose(targets, Q, atol=1e-6)
+        groups = out[-2].split("|")
+        flags = [int(v) for v in groups[0].split()]
+        actual_pos = np.array(groups[1].split(), float)
+        target_pos = np.array(groups[2].split(), float)
+        actual_euler = np.array(groups[3].split(), float)
+        target_euler = np.array(groups[4].split(), float)
+        self.assertEqual(flags, [1, 0, 0, 0])
+        np.testing.assert_allclose(target_pos, actual_pos, atol=1e-6)
+        np.testing.assert_allclose(target_euler, actual_euler, atol=1e-5)
+        raw = np.array(out[-1].split(), float)
+        self.assertEqual(raw[0], 1.0)
+        np.testing.assert_allclose(raw[1:4], actual_pos, atol=1e-6)
+        np.testing.assert_allclose(raw[4:7], actual_euler, atol=1e-5)
+
+    def test_rc_ik_tcp_transform_matches_fixed_tool_frame(self):
+        out = self.session(["state 7", q_line(Q), "run", "ikdump"], omax=5.0)
+        groups = out[-1].split("|")
+        actual_pos = np.array(groups[1].split(), float)
+        actual_euler = np.array(groups[3].split(), float)
+        expected = forward_frames(DHTable(), Q)[-1] @ END_TO_TCP
+        np.testing.assert_allclose(actual_pos, expected[:3, 3], atol=1e-6)
+        np.testing.assert_allclose(actual_euler, euler_zyx_deg(expected[:3, :3]), atol=1e-4)
+
+    def test_rc_ik_position_channels_map_x_y_z(self):
+        out = self.session([
+            "state 7", q_line(Q), "run", "ikdump",
+            "rc 0 660 0 0 0", "run", "ikdump",
+            "rc 0 0 660 0 0", "run", "ikdump",
+            "rc 0 0 0 660 0", "run", "ikdump",
+        ], omax=5.0)
+        targets = []
+        for line in out:
+            if len(line.split("|")) == 5:
+                targets.append(np.array(line.split("|")[2].split(), float))
+        self.assertEqual(len(targets), 4)
+        np.testing.assert_allclose(targets[1] - targets[0], [0.0001, 0.0, 0.0], atol=1e-7)
+        np.testing.assert_allclose(targets[2] - targets[1], [0.0, 0.0001, 0.0], atol=1e-7)
+        np.testing.assert_allclose(targets[3] - targets[2], [0.0, 0.0, 0.0001], atol=1e-7)
+
+    def test_rc_ik_ch4_switches_and_attitude_channels_map(self):
+        out = self.session([
+            "state 7", q_line(Q), "run",
+            "rc 0 0 0 0 0", "run",
+            "rc 0 0 0 0 660", "run", "ikdump",
+            "rc 0 0 0 0 0", "run", "ikdump",
+            "rc 660 0 0 0 0", "run", "ikdump",
+            "rc 0 0 660 0 0", "run", "ikdump",
+            "rc 0 0 0 660 0", "run", "ikdump",
+        ], omax=5.0)
+        lines = [line for line in out if len(line.split("|")) == 5]
+        flags = [[int(v) for v in line.split("|")[0].split()] for line in lines]
+        eulers = [np.array(line.split("|")[4].split(), float) for line in lines]
+        self.assertEqual(flags[0][1], 1)
+        self.assertEqual(flags[1][2], 1)
+        np.testing.assert_allclose(eulers[2][0] - eulers[1][0], 0.01, atol=1e-4)
+        np.testing.assert_allclose(eulers[3][2] - eulers[2][2], 0.01, atol=1e-4)
+        np.testing.assert_allclose(eulers[4][1] - eulers[3][1], 0.01, atol=1e-4)
+
+    def test_rc_ik_and_test_states_are_available_to_servant(self):
+        out = self.session([
+            "role 1", "state 7", "state 8",
+        ], omax=5.0)
+        self.assertEqual(out, ["ok 1", "ok 1"])
 
     def test_nonfinite_angle_gives_zero_not_nan(self):
         bad = list(Q)

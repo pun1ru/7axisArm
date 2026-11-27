@@ -104,7 +104,7 @@ class DHEditor(QWidget):
                                f"{self._base_xyz[2]:.6f}) m，"
                                f"rpy = ({self._base_rpy[0]:.3f}, {self._base_rpy[1]:.3f}, "
                                f"{self._base_rpy[2]:.3f})°\n"
-                               "TCP（link8 → 夹爪中心）："
+                               "TCP（DH 末端 → 工具坐标）："
                                f"xyz = ({self._tool_xyz[0] * 1000:.3f}, {self._tool_xyz[1] * 1000:.3f}, "
                                f"{self._tool_xyz[2] * 1000:.3f}) mm，"
                                f"rpy = ({self._tool_rpy[0]:.3f}, {self._tool_rpy[1]:.3f}, "
@@ -184,8 +184,6 @@ class DHEditor(QWidget):
             table = fut.result().copy()
             table.base_xyz_m = self._base_xyz
             table.base_rpy_deg = self._base_rpy
-            table.tool_xyz_m = self._tool_xyz
-            table.tool_rpy_deg = self._tool_rpy
             self.set_table(table, emit=True)
         except Exception as e:
             self.src.setText(f"当前来源：{self._source}（设备读取失败：{e}）")
@@ -226,7 +224,8 @@ class PosePanel(QWidget):
         self.checks: dict[str, QCheckBox] = {}
         for k, (attr, txt) in enumerate((("show_links", "连杆"), ("show_frames", "关节坐标系"),
                                          ("show_axes_line", "关节转轴"), ("show_labels", "关节名称"),
-                                         ("show_tcp", "TCP（夹爪中心）"),
+                                         ("show_tcp", "TCP"),
+                                         ("show_target", "目标位姿（半透明）"),
                                          ("show_grid", "地面网格"), ("show_world", "世界坐标轴"))):
             cb = QCheckBox(txt)
             cb.setChecked(getattr(self.view, attr))
@@ -383,6 +382,7 @@ class PosePanel(QWidget):
         for s in self.sliders:
             s.setEnabled(manual)
         if manual:
+            self.view.set_target_angles(None)
             self._on_slider()
 
     def _on_slider(self) -> None:
@@ -430,5 +430,12 @@ class PosePanel(QWidget):
             s = self._get_sample()
             if s is not None:
                 self.view.set_angles([j.angle_deg for j in s.joints])
+                posture = s.posture
+                if posture is not None and posture.target_pose_valid:
+                    self.view.set_target_pose_deg(
+                        posture.target_x, posture.target_y, posture.target_z,
+                        posture.target_roll, posture.target_pitch, posture.target_yaw)
+                else:
+                    self.view.set_target_angles(None)
         if self.view.selected is not None:
             self.view.set_selected(self.view.selected, self._joint_info(self.view.selected))

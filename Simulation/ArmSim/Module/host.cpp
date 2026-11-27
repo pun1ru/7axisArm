@@ -55,7 +55,7 @@ constexpr uint8_t kIkMethodNumeric = 1;    // 数值解：先规划完整关节�
 
 constexpr size_t kIkTargetSizeLegacy = 32;
 constexpr size_t kIkTargetSize = 64;
-constexpr size_t kPostureSize = 44;
+constexpr size_t kPostureSize = 72;
 constexpr uint16_t kPostureDivider = 5;    // 每 5 帧 JOINT_STATE 发一帧 ARM_POSTURE
 constexpr size_t kExchangeCommandSize = 40;
 constexpr size_t kExchangeStateSize = 80;
@@ -396,6 +396,17 @@ void Host::SendPosture()
         std::min<size_t>(ik.trajectory_index, 0xFFFFU)));
     payload[40] = ik.plan_failure;
     payload[41] = ik.limit_mask;
+    payload[44] = ik.active ? 1U : 0U;
+    if (ik.active)
+    {
+        const Pose tcp_target = PoseFromTransform(ik.pose * arm_.config().tcp);
+        PutFloat(payload + 48, tcp_target.position_m[0]);
+        PutFloat(payload + 52, tcp_target.position_m[1]);
+        PutFloat(payload + 56, tcp_target.position_m[2]);
+        PutFloat(payload + 60, tcp_target.euler_deg[0]);
+        PutFloat(payload + 64, tcp_target.euler_deg[1]);
+        PutFloat(payload + 68, tcp_target.euler_deg[2]);
+    }
     SendFrame(kMsgArmPosture, payload, sizeof(payload));
 }
 
